@@ -1,0 +1,63 @@
+typeclass Show ::= 
+  sig show : a -> String;
+;
+
+datatype List 'a ::= []
+                   | 'a :: List 'a;
+
+sig reverse : List a -> List a;
+def reverse = 
+  let rev acc [] = acc 
+  |   rev acc (a::as) = rev (a:acc) as; 
+  rev [];
+
+sig (++) : List (List a) -> List a;
+ifx [] ++ l2 = l2
+|   (a::as) ++ l2 = a :: (as ++ l2);
+
+implement Show for List ::=
+  def show list = 
+    let loop [] = []
+    |   loop (a::[]) = [show a]
+    |   loop (a::as) = (show a) :: ',' :: ' ' :: (show as);
+    '[' :: loop list ++ ']';
+;
+
+sig map : (a -> b) -> List a -> List b;
+def map _ [] = []
+|   map f (a::as) = f a :: map f as;
+
+// could use a kind of continuation-passing style... all functions
+// must return something, so what do we do with an io function that
+// returns void?
+sig io print : a -> (b -> c) -> b -> c where a :~ Show;
+def io print a f = do PRINT a then f;
+
+// alternatively, print could just return a void, and then the do
+// keyword could take any structure and "consume it", returning a ().
+// do is a builtin function
+sig io do : a -> ();
+def io do _ = /* system calls in here */ ();
+
+sig io write : Handle -> String -> ();
+def io write h s = /* system calls in here */;
+
+sig io writeLn : Handle -> String -> ();
+def io writeLn h s = write h (s ++ "\n");
+
+sig io putStrLn : String -> ();
+def io putStrLn = writeLn Sys.stdout;
+
+sig io print : a -> () where a :~ Show;
+def io print = putStrLn . show;
+
+sig io printList : [a] -> () where a :~ Show;
+def io printList = do map print;
+
+// map print : [t] -> [()] where t :~ Show;
+// do : t -> ();
+// therefore do map print : [a] -> ()
+
+// the type of this is important... what should this return?
+sig io printList : [a] -> [()] where a :~ Show;
+def io printList = map print;

@@ -1,0 +1,35 @@
+start ::= (statement)*
+
+statement ::= 
+  importStmt ";"
+  | letStmt ";"
+  | dataDec ";"
+
+importStmt ::= "import" moduleName ("," moduleName)*
+             | "from" moduleName "import" name ("," name)*
+
+dataDec ::= "data" typeName "=" constructor ("|" constructor)*
+
+constructor ::= typeName+
+
+letStmt ::= "let" dec ("|" dec)* ("," "let" dec ("|" dec)*)*
+
+dec ::= varName (pattern)* "=" expression
+
+pattern ::= varName
+          | typeName
+          | "(" typeName (varName)* ")"
+
+expression ::= term
+             | term op expression
+             | term expression
+             | "if" expression "then" expression "else" expression
+             | letStmt expression
+
+name ::= identifier
+moduleName ::= capIdent
+typeName ::= capIdent
+varName ::= lcIdent
+identifier ::= lcIdent | capIdent
+capIdent ::= r"[A-Z_][a-zA-Z0-9]*"
+lcIdent ::= r"[a-z_][a-zA-Z0-9]*"

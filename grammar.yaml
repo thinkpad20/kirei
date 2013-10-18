@@ -1,0 +1,87 @@
+start:
+  (statement ";")*
+
+statement:
+  importStmt
+  letStmt ("," letStmt)*
+  dataDec
+  expr
+
+importStmt:
+  "import" moduleName ("," moduleName)*
+  "from" moduleName "import" name ("," name)*
+
+dataDec: 
+  "data" typeName "=" constructor ("|" constructor)*
+
+constructor: 
+  typeName (typeName)*
+
+letStmt: 
+  "let" dec ("|" dec)*
+
+dec: 
+  varName (pattern)* "=" expr
+
+pattern:
+  varName
+  typeName
+  "(" typeName (varName)* ")"
+
+expr:
+  term
+  term op expr
+  term expr
+  "if" expr "then" expr "else" expr
+  statement ";" expr # need to think more about this...
+
+term:
+  number
+  name
+  lambda
+  string
+  list
+  dictionary
+  "(" expr ")"
+
+lambda:
+  "\\" (pattern)* "=>" expr
+
+list:
+  "[" (expr (";" expr)*)? "]"
+  "[" expr ("," expr)* for varName ("," varName)* in expr]
+
+dictionary:
+  "{" (pair (";" pair)*)? "}"
+
+pair:
+  expr "=>" expr
+
+doStmt:
+  "do" expr
+
+op:
+  r"[<>=+-.*^%$&]+"
+
+number:
+  r"[0-9]+(\.[0-9]+)?"
+
+name:
+  moduleName
+  typeName
+  varName
+
+moduleName: 
+  capIdent
+
+typeName: 
+  capitalIdentifier
+
+varName: 
+  lowercaseIdentifier
+
+capitalIdentifier: 
+  r"[A-Z][a-zA-Z0-9_]*"
+
+lowercaseIdentifier: 
+  r"[a-z_][a-zA-Z0-9_]*"

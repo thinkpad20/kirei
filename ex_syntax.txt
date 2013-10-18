@@ -1,0 +1,90 @@
+let foo x y = x + y;
+
+let fact 0 = 1
+|   fact n = n * fact (n - 1)
+;
+
+(*  tail-recursive factorial *)
+let fact = let f' acc 0 = acc | f' acc n' = f' (acc * n') (n' - 1); f' 1 n;
+
+(*  same as above but using whitespace *)
+let fact =
+  let f' acc 0 = acc
+  |   f' acc n' = f' (acc * n') (n' - 1);
+  f' 1 n
+;
+
+(*  dictionary syntax *)
+(*  myMap : Map String String *)
+let myMap = {"foo": "bar"; "baz": "qux"};
+
+(*  myMap2 : Int -> Map String Int *)
+let myMap2 a = {"foo": a; "bar": 2};
+
+(*  myMap3 : Num a => a -> Map String (a -> a -> a) *)
+let myMap3 a = {
+  "mult": \x y => a * x * y; 
+  "add": \x y => x + y + a; 
+};
+
+(*  someMap[someKey] is sugar for lookup someMap someKey *)
+let f = (myMap3 5)["mult"];
+(*  f : Num a => Maybe (a -> a -> a) *)
+(*  this pattern match will fail if f is Nothing *)
+let Just g = f;
+
+print g 6 7; (*  prints Just 210 *)
+
+(*  declaring an io function  *)
+io let p name f = 
+  let msg = "Name: " ++ name ++ ", f 8 9: " ++ show (f 8 9);
+  print msg;
+
+(*  mapping this function over a list *)
+[p name f for name, f in pairs (myMap3 7)]
+
+(* we could do it this way too *)
+io let fuzz mp a b c =
+  io let p name f =
+    let s = ", f " ++ show b ++ " " ++ show c ++ ": ",
+        msg = "Name: " ++ name ++ s ++ show (f b c);
+    print msg;
+  [p name f for name, f in pairs (mp a)];
+
+fuzz myMap3 7 8 9;
+
+
+(*  JSON obj *)
+(*  what if we could specify type classes here instead of just types? *)
+datatype JSON = 
+    JString String
+  | JNum Num
+  | JBool Bool
+  | JNull
+  | JArray [JSON]
+  | JDict (Map String JSON)
+;
+
+(*  We could support syntactic sugar for json: *)
+let myJson = {-
+  "settings": {-
+    "foo": "bar",
+    "number": 3,
+    "truth": False
+  -},
+  "how now": ["brown", "cow", 7]
+-}
+;
+
+(*  which is equiv to *)
+let myJson2 = JDict ({
+  "settings": JDict ({
+    "foo": JString "bar";
+    "number": JNum 3;
+    "truth": JBool False
+  });
+  "how now": JArray [JString "brown", JString "cow", JNum 7]
+})
+;
+
+print myJson == myJson2; (*  prints True *)
