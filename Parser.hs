@@ -1,4 +1,4 @@
-import Text.ParserCombinators.Parsec
+import Text.ParserCombinators.Parsec hiding (optional)
 import Text.Parsec.Expr
 import Control.Applicative hiding ((<|>), many)
 
@@ -8,6 +8,7 @@ data Expr = Term Term
           | Apply Expr Expr
           | If Expr Expr Expr
           | Lambda [Name] Expr
+          | Let String Expr (Maybe Expr)
           deriving (Show)
 
 data Term = Bool Bool
@@ -18,15 +19,20 @@ data Term = Bool Bool
           | Parens Expr
           deriving (Show)
 
-keywords = ["if", "then", "else", "True", "False", "->", 
-            "=>", "fn", "let", "def", "sig", ":", "|"]
+keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
+keySyms = ["->", "=>", ":", "|", "=", ";", "\\"]
 lexeme p = p <* spaces
 schar = lexeme . char
 
 keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
-checkKeyword s = if s `elem` keywords
+keysim k = lexeme . try $ 
+  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&$")
+
+checkParse p = lexeme . try $ do
+  s <- p  
+  if s `elem` (keywords ++ keySyms)
     then unexpected $ "reserved word " ++ show s
     else return s
 
@@ -45,14 +51,10 @@ pString :: Parser String
 pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
 pIdentifier :: Parser String
-pIdentifier = lexeme . try $ do
-  ident <- many1 letter
-  checkKeyword ident
+pIdentifier = checkParse $ many1 letter
 
 pSymbol :: Parser String
-pSymbol = lexeme . try $ do
-  sym <- lexeme $ many1 $ oneOf "><=+-*/^~!%@&$"
-  checkKeyword sym
+pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
 
 pParens :: Parser Expr
 pParens = between (schar '(') (schar ')') pExpr
@@ -82,11 +84,15 @@ pIf = If <$ keyword "if"   <*> pExpr
          <* keyword "else" <*> pExpr
 
 pLambda :: Parser Expr
-pLambda = Lambda <$ keyword "fn" <*> many pIdentifier
-                 <* keyword "=>" <*> pExpr
+pLambda = Lambda <$ keysim "\\" <*> many pIdentifier
+                 <* keysim "=>" <*> pExpr
 
+pLet :: Parser Expr
+pLet = Let <$ keyword "let" <*> pIdentifier
+           <* keysim "=" <*> pExpr 
+           <* keysim ";" <*> optional pExpr
 
 pExpr :: Parser Expr
-pExpr = pIf <|> pLambda <|> pApply
+pExpr = choice [pIf, pLambda, pLet, pApply]
 
 test parser = parse (spaces *> parser <* eof) ""
