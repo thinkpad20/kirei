@@ -1,0 +1,49 @@
+def foo : Int -> Int -> Int = \i j => i * j;
+
+becomes
+
+var foo = function(i, j) { return i * j; };
+______________
+
+let foo = \i j => i * j;
+
+Same thing, type-inferred
+
+def bar : String -> IO -> () = \s io => alert s io;
+
+becomes
+
+var bar = function(s) { alert(s); };
+
+______________
+
+def bar = \s io => alert s io;
+
+____________
+
+sig poop : String -> String -> String -> IO -> Int;
+def poop = \s1 s2 s3 io ->
+  console/log ("s1: " ++ s1) io -->
+  console/log ("s2: " ++ s2) io -->
+  console/log ("s3: " ++ s3) io -->
+  s1/length + s3/length + s3/length;
+
+poop "hey" "hi" "hello!" $IO;
+
+becomes
+
+var poop = function(s1, s2, s3) {
+  console.log("s1: " s1);
+  console.log("s2: " s2);
+  console.log("s3: " s3);
+  return s1.length + s2.length + s3.length;
+};
+
+console.log(poop("hey", "hi", "hello!"));
+
+___________
+
+sig poop1 : String -> IO -> Int;
+def poop1 = poop "hey" "hi";
+
+poop1 "hello!" $IO;

@@ -1,0 +1,41 @@
+def io $ = fromJObj '$';
+def io ajaxReq = $.ajax {- "yo": "hey" -};
+
+sig io printList : [a] -> () where a :~ Show;
+def io printList = do . (map print);
+
+def io printList as = do map print as;
+
+imp Show for () ::=
+  sig show : () -> String;
+  def show _ = "()";
+
+sig io print : a -> () where a :~ Show;
+def io print = (_$_.print) . show;
+
+sig showables : List (a :~ Show);
+def showables = ["hi", 3, (), "lolcats"];
+
+print typeString showables; // prints List (a:~Show)
+print (showables :~ Show); // prints True
+print showables; // prints ["hi",3,(),"lolcats"]
+
+sig io write : Handle -> String -> ();
+def io write h s = _$_.write h s;
+
+// special syntax for updating DOM? or just for updating in general?
+sig rf (:=) : a -> a -> () where (a :~ Mutable);
+ifx rf v1 := v2 = /* evil wizardry here */;
+
+
+// need to think more about this!
+sig rf hidePs : () -> ();
+def rf hidePs = ($ "p").hide;
+
+sig rf regButton : String -> (() -> ()) -> ();
+def rf regButton name f = ($ name).click f;
+
+sig rf docReady : () -> ();
+def rf docReady = ($ document).ready;
+
+docReady (regButton "button" hidePs);

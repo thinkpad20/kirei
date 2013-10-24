@@ -1,0 +1,7 @@
+An alternative to a lookup returning a Just, we could use a default argument:
+
+sig get : Map a b -> a -> b -> b;
+def get m a b = 
+  case lookup m a of
+    Just x -> x
+    | Nothing -> b;

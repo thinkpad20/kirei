@@ -1,0 +1,43 @@
+OK, new idea! :) IO is, as in my earlier language idea, passed in as an argument. This provides two main benefits: 
+  (1) it puts functional purity back into the type system, rather than having it managed through the more "primitive" system of keywords :)
+  (2) it solves the thorny issue of, we should always have a value returned when a function has satisfied all of its arguments.
+
+Examples:
+
+// some system functions...
+sig openFile : String -> IO -> Handle;
+sig readFile : Handle -> String;
+
+sig countLinesInFile : String -> IO -> Int;
+def countLinesInFile fname io = 
+  openFile fname io .> readFile .> splitLines .> length;
+
+
+sig countLinesInFoo : IO -> Int;
+def countLinesInFoo = countLinesInFile "foo.txt";
+
+// then when we actually want to make it happen,
+countLinesInFoo GETIO;
+
+OK, so how about mutable variables? For example, mutable elements on the page,
+if we're talking JavaScript?
+
+$(document).ready(function(){alert("hi!");});
+
+We want to be able to say something similar!
+
+// we could say:
+ready ($ document) (fn io => alert "hi!" io);
+// but want to be able to use the dot notation... very convenient/natural
+($ document).ready (fn io => alert "hi!" io);
+// note that we don't need to worry about how the io actually gets there. In
+// this case it's going to be removed anyway. But since `alert` is clearly an
+// IO method, we need to call it with an IO token, so the function `ready`
+// needs to be given this as an argument.
+
+sig (:=) : Ref a -> b -> ();
+
+sig ([]) : (Map a b) -> a -> Maybe b;
+
+sig ready : Ref DOM -> (IO -> ()) -> ();
+def rdom.ready f = rdom.onReady := f;

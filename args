@@ -1,0 +1,2 @@
+let args = import "sys/args";
+do [println arg for arg in args];

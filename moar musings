@@ -1,0 +1,103 @@
+let f = do (open "file.txt").read;
+
+// is this function really pure?
+sig pureFunc : String -> Boolean;
+def pureFunc s = find s f;
+
+// it is pure in the sense that it doesn't have a side-effect, since f has
+// been called outside of a function, and strictness means that f will already
+// have been loaded before any call to pureFunc... so it's OK, I guess? But
+// it does mean that pureFunc is stateful, since the value it returns will 
+// depend on the environment in which it's run. How would this look in
+// Haskell?
+
+main = do
+  f <- hGetContents $ open "file.txt"
+  let pureFunc s = find s f
+  print $ pureFunc "foo"
+  return ()
+
+// OK, so the good news is that pureFunc has to be declared inside of an IO
+// context. We can't capture f outside of that context, so pureFunc cannot
+// be exported as a truly pure function. This is definitely a nice feature
+// of Haskell.
+
+// What we could do instead is enforce using the io keyword wherever whe have
+// a captured variable that comes from an io source. But this gets pretty
+// obnoxious and would likely lead to people simply using io everywhere.
+// But it might be ok.
+
+sig io impureFunc : String -> Boolean;
+def io impureFunc = find s f;
+
+// this is better since it more accurately reflects the reality. OK, so one 
+// benefit to this kind of bookkeeping is that it "truly" supports pure
+// functional programming, in the sense that it can't be cheated. And there
+// are still tons of functions we should be able to write which are entirely
+// pure.
+
+// As a point in this guy's favor, even C enforces this purity (for the most
+// part), since you can't make a "bare" function call. In other words, in C,
+// the very first line of this code would be illegal; you would only be
+// able to load the file somewhere downstream of main(). That's not really the
+// same kind of idea (indeed, in this sense we're less safe because we allow
+// stateful things to happen outside of main -- but that's because we want to
+// support scripting. Side note, we could have an optional flag which enforces
+// a kind of "main function" from which all calls must begin, for a non-
+// scripting version of the language).
+
+// We could make it optional to disable the IO-ness of the top level 
+// functionality. The first option here would allow declaring io functions
+// but disallow running any of them. The one below would disallow even
+// the declaration of io functions.
+
+/*| LANGUAGE disallow io |*/
+print "hey there!"; // throws a compile-time error
+def io foo = print "foo"; // OK
+
+/*| LANGUAGE pure |*/
+def io bar = print "bar"; // throws a compile-time error
+
+// important: things like "lists of objects of type Show" won't
+// work for things which have to interact with each other. So 
+// that behavior must be restricted to type classes which do
+// not interact with each other. Otherwise, we have to use
+// the same types. This could possibly be expanded if we make
+// type classes which incorporate the multitype signatures, like
+
+sig foo : (String | [Int]) -> Int;
+def foo (String s) = foo (map ord s);
+def foo ([Int] is) = foldl (+) 0;
+
+// so with some cleverness, perhaps we could create a typeclass which
+// incorporates those kinds of alternatives.
+
+
+
+
+// Hello world server example with logging
+do import socket, date;
+
+sig concatS : [~Show] -> String;
+def concatS = ;
+
+let io logFile = open "log.txt";
+def io log msg = write logFile message where
+  message = concat . (map show) [date.now, ": ", msg, "\n"];
+
+def io helloLoop sock = 
+  let client = accept sock;
+  do log ("client connected on " ++ client.port)
+  -> write client "Hello!\r\n"
+  -> close client
+  -> helloLoop;
+do helloLoop (socket.listenOn "8080");
+
+// alternatively, with a lambda
+do (fn sock => 
+  let client = accept sock;
+  do log ("client connected on " ++ client.port)
+  -> write client "Hello!\r\n"
+  -> close client
+  -> %; // % means recurse on the current function
+) (socket.listenOn "8080");

@@ -1,0 +1,75 @@
+sig import : String -> IO -> Module;
+sig thisFile : IO -> String; # returns current file's name
+
+let os = import "os" $IO;
+def dirname : String -> String = os/path/dirname;
+def split : String -> String = os/path/split;
+def join : [String] -> String = os/path/join;
+
+# using forward slashes as . in an OO language
+$/document/ready (λ io => alert "poop!" io);
+
+def configDir : IO -> FilePath = \io =>
+  let baseDir = (dirname (thisFile io) .> split)[0] .> split)[0];
+  join [baseDir, "test_configs", "ishmael_test_data"];
+
+Alright, let me gather my thoughts... in prefix syntax, we can write
+
+3 + 4
+
+as
+
++ 3 4
+
+Which is understood to be
+
+((+ 3) 4)
+
+so we have
+
+def (+) : Int -> Int -> Int = \a b => builtin/ADD a b;
+
+OK that's all well and good for syntax... What does this mean for parsing though? Should we even make a distinction? 
+As in, should we parse (3 + 4)
+  Binary "+" (Term (Number 3)) (Term (Number 4))
+or should we instead do
+  "Apply (Apply (Term (Name "+")) (Term (Number 3))) (Term (Number 4))
+?
+
+The first one is closer to the language, but the second one is closer to the "meaning". On the other hand, from a viewpoint of practicality, the first one is actually better, especially when considering the conversion to Javascript.
+
+But what about unary expressions? In that case it's cleaner to use the second syntax...
+
+  Unary "-" (Term (Number 4))
+vs
+  Apply (Term (Name "-")) (Term (Number 4))
+
+Which really is close to the reality of the situation.
+
+Of course, a lot of this might be solved just by the "maximal munch" rule: the rule that says an expression should attempt to be as large as it can, and no larger. This means that if we have
+
+let a = 3 +;
+
+We would parse this as
+
+    Assign
+    /    \
+  String  Expr
+  /        \
+ a       Apply
+          /  \
+        Expr Expr
+        /     \
+      Term    Term
+      /        |
+    Name      Number
+     /         |
+    "+"        3
+
+Would we also want to allow
+  let addExcl = ++ "!";
+?
+
+Initially, I'm thinking no... it's not that much of a hassle for someone to just write
+
+let addExcl = \s => s ++ "!";

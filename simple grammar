@@ -1,0 +1,17 @@
+expr -> term
+      | expr term
+      | IF expr THEN expr ELSE expr
+      | LET assign ';' expr
+
+assign -> identifier '=' expr
+        | identifier '=' expr '|' assign
+
+apply -> term
+       | term apply
+
+term -> boolConst
+      | numConst
+      | strConst
+      | identifier
+      | '(' expr ')'
+

@@ -1,0 +1,118 @@
+OK one potential pitfall of the "pure-kinda" IO functionality I had described before: if an IO token can be put into a closure, this gives us problems. For example, we could fake a "pure" variable with the following:
+
+# let's say we have this impure print function:
+sig impurePrint : String -> IO -> ();
+
+# so impurePrint can only be called by passing in an IO token; meaning that 
+# no function can call impurePrint without being passed an IO token itself.
+# Or so we want! What if I did this?
+
+sig purePrint : String -> ();
+def purePrint s = impurePrint s $IO;
+
+# Typesafe-wise this checks out! Now, we had been talking about specifically
+# not allowing $IO to be included in closures, which would prevent this
+# specific example. But does it go far enough?
+
+# Hmm, I'm starting to think yes it does. The main idea is that the $IO token
+# cannot appear in any function -- it can only appear in a function call, and
+# even there it can only be used by top-level functions.
+
+# For example, with the following functions:
+sig open : String -> IO -> File;
+sig readFile : File -> String;
+
+# We could do the following
+let contents = readFile $ open "foo.txt" $IO;
+
+# contents is therefore of type String, so it can be put into closures:
+sig isInFoo : String -> Bool;
+def isInFoo s = isSubString s contents;
+
+# But what we couldn't do is this:
+sig BADisInFoo : String -> Bool;
+def BADisInFoo s = isSubString s (readFile (open "foo.txt" $IO));
+
+# One might consider a referentially transparent language to allow this, but
+# I guess the short of it is that we don't have referential transparency with
+# IO. Because IO is stateful (we'll think about this more later with mutable
+# variables as well), we clearly can't allow supposedly pure functions to
+# have access to $IO. It is, on the other hand, perfectly fine to say:
+
+sig GOODisInFoo : String -> IO -> Bool;
+def GOODisInFoo s io = isSubString s (readFile (open "foo.txt" io));
+
+# but not this!
+def BADisInFoo2 s = GOODisInFoo s $IO;
+
+# So essentially what this means is that no function (a.k.a. no incompletely
+# determined expression) can contain the top-level $IO token. Anything which
+# uses $IO must be a completely determined value, because the whole nature of
+# the $IO literal is to represent "the outside world at the current moment".
+# Another way to say this is that $IO cannot be captured in a closure. Also, 
+# IO tokens can never be returned, only consumed.
+
+# disallowed!
+sig hiddenIO : IO;
+let hiddenIO = $IO;
+
+# this is OK....
+sig launchMissiles : Int -> IO -> Int; # returns number of missiles launched
+
+# but this isn't! Can't return $IO as part of a closure.
+sig looksLegit : Int -> Int;
+def looksLegit i = launchMissiles i $IO; #oh noes, side effects!
+
+# So the rule is that IO can never be on the right hand side of an assignment,
+# unless that assignment results in a completely-determined value (or perhaps
+# more precisely, unless the value returned does NOT contain an io value).
+
+# So what about this?
+
+sig (-->) : () -> a -> a;
+def action --> a = a;
+
+sig print : String -> IO -> (String -> IO -> ());
+def print s io = BUILTIN/print s io --> print; 
+# hmm, this wouldn't type match. And type inference would probably mean 
+# constructing an infinite type... however, it is instructive to see how
+# we might chain together IO actions (without a monad).
+
+sig converse : String -> IO -> ();
+def converse port io = 
+  let s = socket port io;
+  write "hey!\n" s io -->
+    let response = read s io;
+    let respond r io = write r s io --> close s io --> converse port io;
+    if response == "what's up?" 
+      then respond "not much!\n" io
+      else respond "I don't understand..." io;
+
+# We'd LIKE to be able to write...
+
+  sig respond : String -> ();
+  let respond r = write r s io --> close s io --> converse port io;
+  if response == "what's up?"
+    then respond "not much!\n"
+    else respond "I don't understand...";
+
+# problem with this is it would mean capturing IO in a closure. In this
+# case there's nothing wrong with it, but in the global sense it is. Maybe
+# though it's ok, as long as we're not doing something like this:
+
+sig converse : String -> IO -> String -> ();
+def converse port io =
+  let s = socket port io;
+  #- assume we've initialized sockets, etc -#
+  let response r io = write r s io;
+  response io;
+
+# disallowed anyway, since we can't put $IO in a closure
+let awwCrap = converse 3456 $IO;
+
+# but this is OK:
+let yeah = converse 3456 $IO "hell yes!\n";
+# really there's no reason to give it a name... yeah is just (). But w/e
+
+# but putting io in a closure is exactly what we're doing with response... 
+# can we just not get around this?

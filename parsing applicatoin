@@ -1,0 +1,28 @@
+Input:
+
+a b 4
+
+Parse tree we got:
+
+           Apply
+         /       \
+      Term       Apply
+      /         /      \ 
+  Ident "a"  Term     Term
+              /         \
+          Ident "b"    Num 4.0
+
+What we want:
+        
+         Apply
+         /   \
+      Apply  Term
+     /   \      \
+   Term   Term  Num 4.0
+   /       \
+Ident "a"  Ident "b"
+
+What this means:
+We need to parse as many Applies as we can before we "settle" for a final Term.
+
+So either we find just a Term, in which case we return the Term, or we find a Term and another Term, and we apply that second Term to the first and keep going. Sounds like a tail-recursive strategy?
