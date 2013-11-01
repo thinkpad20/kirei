@@ -48,8 +48,33 @@ def io writeLn h s = write h (s ++ "\n");
 sig io putStrLn : String -> ();
 def io putStrLn = writeLn Sys.stdout;
 
-sig io print : a -> () where a :~ Show;
-def io print = putStrLn . show;
+def print: (a:~ Show) -> IO -> () = 
+  (\s => putStrLn s io) <~ show;
+
+___
+
+what about
+
+  $(document).ready(function() {alert("yo!");});
+
+?
+
+# we're assuming that mutable objects like IO and mutable
+# data structures always have an associated token type which
+# allows us to modify them
+dec ready: Dom -> (IoT -> ()) -> DomT -> ();
+let ready = \d f tok => set (d.map "ready") f tok;
+
+ready $.document (\io => alert "yo!" io) $.token;
+
+# hmm, this is pretty cumbersome... we might want to reconsider.
+# Another approach would be to change "the world". In effect, a
+# void function would change "the world", much like IO does.
+
+sig (:=) : Ref a -> a -> Ref a;
+
+
+___
 
 sig io printList : [a] -> () where a :~ Show;
 def io printList = do map print;

@@ -1,0 +1,46 @@
+let foo: Int -> Int = \n => f n 1
+  where f = \ 0 acc => acc
+            | n acc => $$ (n-1) (acc*n);
+
+sig foo: Int -> Int;
+let foo = \n => f n 1 where
+  f = \ 0 acc = acc
+      | n acc => f (n-1) (acc*n);
+
+let bar = \n m => (f m ~> g) n where
+  f = + and
+  g = \x => x^2;
+
+
+sig name: (Pet | Person) -> String;
+let name for Pet = \(name species breed) => name;
+|   name for Person = \(name age sex) => name;
+
+
+data Sex = Male | Female;
+data Species = Dog | Cat;
+
+alice = Person "Alice" 19 Female;
+bob = Person "Bob" 23 Male;
+fido = Pet "Fido" Dog "Rottweiler";
+
+let (<~) : (b->c) -> (a->b) -> (a->c) = \f g => \x => f(g(x));
+let (~>) : (a->b) -> (b->c) -> (a->c) = \f g => \x => g(f(x));
+let (!) : (a->b) -> a -> b = \f x => f x;
+let (.) : a -> (a->b) -> b = \x f => f x;
+
+print <~ name -< alice -< $IO;
+
+# or
+let printName: (Pet | Person) -> IO -> () = name ~> print;
+printName alice $IO;
+
+
+sig ready : DOM -> (IO -> ()) -> DOM;
+
+$.document.ready : (IO -> ()) -> DOM;
+
+alert "hey there!" ~> $.document.ready;
+
+# or
+ready (document $) (alert "hey there!");

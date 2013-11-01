@@ -1,0 +1,44 @@
+/- Definitely need to think about how to handle member functions, reference
+   objects, etc... -/
+
+let doubleThenSquare: [a :~ Num] -> [a] = map (*2) ~> map (^2);
+# same as
+let doubleThenSquare = map (^2) <~ map (*2);
+# and same as
+let doubleThenSquare = map ((*2) ~> (^2));
+# note that
+let squareThenDouble = map (^2) ~> map (*2);
+# is not the same as doubleThenSquare.
+
+# this line
+[1..10] >- doubleThenSquare ~> print $1 $IO;
+
+# is the same as this line
+print (doubleThenSquare [1..10]) $IO;
+
+# which is the same as this line
+(\l => print l IO) <~ doubleThenSquare [1..10];
+
+# which is the same as
+((doubleThenSquare ~> print) [1..10]) $IO;
+
+# which is the same as
+(print $1 $IO) -< doubleThenSquare [1..10];
+
+# ye olde factorial
+let fact = \n =>
+  let f1 = \0 acc => acc
+           |n acc => f1 (n-1) (acc*n);
+  f1 n 1;
+
+# anonymous recursion
+let fact: Int -> Int = \n => (\0 acc => acc | \n acc => $$ (n-1) (acc*n)) n 1;
+
+# or, using bash-style currying...
+let fact: Int -> Int = (\0 acc => acc | \n acc => $$ (n-1) (acc*n)) $1 1;
+
+# or even using standard currying
+let fact: Int -> Int = (\acc 0 => acc | \acc n => $$ (acc*n) (n-1)) 1;
+
+# we can use $$ with non-anonymous functions
+let length [] = 0 | length (a::as) = 1 + $$ as;

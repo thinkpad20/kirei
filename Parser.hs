@@ -1,3 +1,5 @@
+module Parser where
+
 import Text.ParserCombinators.Parsec hiding (optional)
 import Text.Parsec.Expr
 import Control.Applicative hiding ((<|>), many)

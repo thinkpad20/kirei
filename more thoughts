@@ -1,0 +1,52 @@
+sig a : Num;
+let a = let b = 1; b;
+
+sig foo : Int -> String;
+let foo = \i => 
+  let j = i + 2; 
+  show i ++ " + 2 = " ++ show j;
+
+sig (,) : a -> b -> b;
+a, b = b;
+
+sig bar : Int -> IO -> Int;
+let bar = \i io => 
+  print (foo i) io,
+  i + len . show i;
+
+data Tuple a b ::= a ,, b;
+
+sig fst : Tuple a b -> a;
+sig snd : Tuple a b -> b;
+
+sig a : Tuple Int (Tuple String Char);
+let a = 
+
+sig baz : Int -> Tuple String Int -> ();
+let baz = \i => let s = show i; (s,, i ^ 2);
+
+bar (snd baz 3) $IO;
+
+Hmmmm, we could have a function
+sig do : IO a -> a;
+
+But then we have to treat IO as a container... which might be ok... hmm
+
+sig bar : Int -> IO Int;
+let bar = \i =>
+  print (foo i) >> return (i + len . show i);
+
+let j: Int = do (bar 3);
+
+Effectively what we're doing is an unsafePerformIO. Which, semantically of course, is what our other system was doing. But this might depend on laziness to be correct... and is kind of basically just copying Haskell. We can keep this in mind though. I guess we could do something like
+
+data IO a ::= IO a;
+
+implement Monad for IO with
+  let return = IO;
+  let io >>= f = IO $ f $ do io;
+;
+
+But naw, ultimately this doesn't really add anything; it only adds a kind of gimpy imitaion of Haskell. I think I like the token idea better for what I'm trying to accomplish: not quite so theoretically beautiful, but intuitive and easy to use, and also translates readily into JavaScript by simply omitting it.
+
+I suppose, though, that such a system could be implemented with our system. Maybe. Might need some clever currying (not sticking in the final io token until the "do")
