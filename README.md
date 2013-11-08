@@ -131,13 +131,13 @@ sig foo : Int -> Int;
 let foo a = fireMissiles a, a + 1; #OK, fireMissiles has no effect
 ```
 
-We have a rule that `IO` tokens cannot be returned inside of closures. This makes `bar` illegal, and for the exact reason we want: otherwise we'd have no way of knowing if `bar` did some side-effecty thing before it returned some innocuous `()`. Basically, tokens are only allowed in completely specified expressions. `let contents = getContents "foo.txt" $IO` is ok. But `let unsafeGetContents = \s => getContents s $IO` is not OK, because a token is being "wrapped up" in a container which hides its existence. A good algorithm to properly detect and make illegal this sort of usage is one of the things I need to work on, but it should be doable.
+We have a rule that `IO` tokens cannot be returned inside of closures. This makes `bar` illegal, and for the exact reason we want: otherwise we'd have no way of knowing if `bar` did some side-effecty thing like firing missiles before it returned some innocuous `()`. Basically, tokens are only allowed in completely specified expressions. `let contents = getContents "foo.txt" $IO` is ok. But `let unsafeGetContents = \s => getContents s $IO` is not OK, because a token is being "wrapped up" in a container which hides its existence. A good algorithm to properly detect and make illegal this sort of usage is one of the things I need to work on, but it should be doable.
 
 Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expression, which would mean it would produce no side-effect. If it didn't perform IO and `a` were all it needed to run, then its value would be computed but not used; this is because we're a strict language.
 
 ### Current status and usage
 
-Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`).
+Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`).
 
 If you have a Haskell platform, you should be good to go. You can try it out like so:
 
@@ -154,4 +154,4 @@ var fact = function (n) {if (lt(n)(2.0)) {return 1.0;} else {return mult(n)(fact
 *CompileJS>
 ```
 
-Yay!
+Yay! Note that when writing a `\` in GHCi you need to write it with two backslashes so that it doesn't interpret it as an escape sequence.
