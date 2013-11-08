@@ -29,7 +29,10 @@ getTyped()
 
 But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads and lambda functions, while the Python is simply a series of instructions, which happen to be doing IO.
 
-Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but (a) to signify that this function is authorized to perform the action requested, and (b) to distinguish between functions which perform some actions which have effects, and the actual running of those functions.
+Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but 
+
+1. to signify that this function is authorized to perform the action requested, and 
+2. to distinguish between functions which perform some actions which have effects, and the actual running of those functions.
 
 In Kirei, the code above might look something like this:
 
