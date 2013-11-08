@@ -1,41 +1,22 @@
-module Parser3 where
+module Parser where
 
 import Text.ParserCombinators.Parsec
 import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
 
-data Statement =
-  Expr Expr
-  | Assign Let
-  deriving (Show)
-
-data Sig =
-  Type String
-  | From Sig Sig
-  deriving (Show)
-
--- later add a maybe sig
-type FreeVar = String
-
-data Let = Let FreeVar Expr deriving (Show)
+type Name = String
 
 data Expr =
-  Term Term
-  | Apply Expr Expr
-  | If Expr Expr Expr
-  | Comma Expr Expr
-  deriving (Show)
-
-data Term =
-  Number Double
-  | Bool Bool
-  | Variable String
-  | Symbol String
+  Bool Bool
+  | Number Double
   | String String
-  | Parens Expr
-  | Lambda [FreeVar] [Let] Expr
+  | Symbol Name
+  | Var Name
+  | If Expr Expr Expr
+  | Let Name Expr (Maybe Expr)
+  | Apply Expr Expr
+  | Lambda [Name] Expr
   deriving (Show)
-
 
 keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
 keySyms = ["->", "=>", ":", "|", "=", ";", "\\"]
@@ -77,48 +58,36 @@ pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
 pParens :: Parser Expr
 pParens = between (schar '(') (schar ')') pExpr
 
-pTerm :: Parser Term
+pTerm :: Parser Expr
 pTerm = choice [ Number   <$> pDouble,
                  String   <$> pString,
-                 Variable <$> pVariable,
+                 Var <$> pVariable,
                  Symbol   <$> pSymbol,
-                 Parens   <$> pParens,
+                 pParens,
                  pLambda ]
 
 pApply :: Parser Expr
-pApply = chainl1 pTerm' $ pure Apply
-
--- pulls "parens" expressions out of terms
-pTerm' :: Parser Expr
-pTerm' = do
-  term <- pTerm
-  case term of
-    Parens expr -> return expr
-    _ -> return $ Term term
+pApply = chainl1 pTerm $ pure Apply
 
 pIf :: Parser Expr
 pIf = If <$ keyword "if"   <*> pExpr
          <* keyword "then" <*> pExpr
          <* keyword "else" <*> pExpr
 
-pLambda :: Parser Term
+pLambda :: Parser Expr
 pLambda = Lambda <$ keysim "\\" <*> many pVariable
-                 <* keysim "=>" <*> many pLet
-                                <*> pExpr
+                 <* keysim "=>" <*> pExpr
 
-pLet :: Parser Let
+pLet :: Parser Expr
 pLet = Let <$ keyword "let" <*> pVariable
            <* keysim "=" <*> pExpr
-           <* keysim ";"
+           <* keysim ";" <*> optionMaybe pExpr
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pApply]
+pExpr = choice [pIf, pApply, pLet, pTerm]
 
-pStatement :: Parser Statement
-pStatement = choice [Assign <$> pLet,
-                     Expr <$> (pExpr <* keysim ";")]
+grab s = case parse (spaces *> pExpr <* eof) "" s of
+  Right val -> val
+  Left err -> error $ show err
 
-pStatements :: Parser [Statement]
-pStatements = many pStatement
-
-test parser = parse (spaces *> parser <* eof) ""
+--test parser = parse (spaces *> parser <* eof) ""
