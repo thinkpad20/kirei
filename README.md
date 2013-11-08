@@ -25,7 +25,7 @@ def getTyped():
     s = raw_input("Write something: ")
     print "You typed: " + s
 
-if __name__ == "__main__": getTyped()
+getTyped()
 ```
 
 But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads and lambda functions, while the Python is simply a series of instructions, which happen to be doing IO.
