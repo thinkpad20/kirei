@@ -15,6 +15,7 @@ data Expr =
   | If Expr Expr Expr
   | Let Name Expr (Maybe Expr)
   | Apply Expr Expr
+  | Comma Expr Expr
   | Lambda [Name] Expr
   deriving (Show)
 
@@ -59,7 +60,8 @@ pParens :: Parser Expr
 pParens = between (schar '(') (schar ')') pExpr
 
 pTerm :: Parser Expr
-pTerm = choice [ Number   <$> pDouble,
+pTerm = choice [ Bool <$> pBool,
+                 Number   <$> pDouble,
                  String   <$> pString,
                  Var <$> pVariable,
                  Symbol   <$> pSymbol,
@@ -67,7 +69,20 @@ pTerm = choice [ Number   <$> pDouble,
                  pLambda ]
 
 pApply :: Parser Expr
-pApply = chainl1 pTerm $ pure Apply
+pApply = pTerm >>= \res -> parseRest res where
+  parseRest res = do
+    f <- pure Apply -- pull the constructor out of the monad
+    y <- pTerm -- run the parser again
+    case y of
+      (Symbol s) -> parseRest (f y res)
+      _ -> parseRest (f res y)
+    <|> return res -- if at any point the second parse fails,
+                   -- return what we have so far
+
+pComma :: Parser Expr
+pComma = chainl1 (pExpr <* char ',' <* spaces) (pure Comma)
+
+
 
 pIf :: Parser Expr
 pIf = If <$ keyword "if"   <*> pExpr
@@ -86,8 +101,10 @@ pLet = Let <$ keyword "let" <*> pVariable
 pExpr :: Parser Expr
 pExpr = choice [pIf, pApply, pLet, pTerm]
 
-grab s = case parse (spaces *> pExpr <* eof) "" s of
+grab s = case parse (spaces *> pExpr
+                     <* many (keysim ";")
+                     <* eof) "" s of
   Right val -> val
   Left err -> error $ show err
 
---test parser = parse (spaces *> parser <* eof) ""
+test parser = parse (spaces *> parser <* eof) ""

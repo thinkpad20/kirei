@@ -50,7 +50,8 @@ instance Show Expr where
   show (Call e es) = concat [show e, "(", intercalate ", " (map show es), ")"]
   show (Binary op e1 e2) = concat [show e1, " ", op, " ", show e2]
   show (Unary op e) = op ++ show e
-  show (Ternary e1 e2 e3) = concat [show e1, " ? ", show e2, " : ", show e3]
+  show (Ternary e1 e2 e3) = concat ["(", show e1, " ? ", show e2,
+                                    " : ", show e3, ")"]
 
 instance Show Statement where
   show (Expr e) = show e ++ ";"
