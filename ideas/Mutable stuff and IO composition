@@ -1,0 +1,144 @@
+We have a trick for dealing with what would be considered "void functions" that perform IO, by using an IO token as an extra argument to a function. For example, in a REPL:
+
+```
+> let foo = \io => println "printed via foo!" io;
+foo : IO -> ();
+> let bar = \io => println "printed via bar!" io;
+bar : IO -> ();
+> let funcs = [foo, bar];
+funcs : [IO -> ()];
+> map (~> $IO) funcs;
+printed via foo!
+printed via bar!
+[(), ()];
+```
+
+Similarly, we need to be able to deal with mutator functions. For example, imagine we had an operator (:=):
+
+```
+# sets a mutable value to be a new mutable value, returns
+# the value that it was set to
+sig (:=) : (a :~ Mutable) -> a -> World -> a;
+```
+
+Also let's imagine we have a rendering type class:
+
+```
+class Render ::=
+  sig render : %a -> String;
+;
+```
+
+And imagine we have an element datatype which implements the `Render` class.
+
+Then, in a repl:
+```
+> (Element "foo").render;
+<foo />
+> let bar = ElementWith "bar" {"hello": "world"};
+> :t bar;
+bar : Element
+> bar.render;
+<bar hello="world" />
+> :t bar.text
+bar.text : String;
+> :imp bar.text Mutable;
+True
+> bar.text := "blibberty blobberty";
+World -> String
+> bar.text := "blibberty blobberty" $W;
+blibberty blobberty
+> bar.render;
+<bar hello="world">blibberty blobberty</bar>
+> bar.attrib;
+{"hello" => "world"}
+> :imp bar.attrib Mutable;
+True
+```
+
+In code, we could curry the function `setAttr`:
+
+```
+sig setAttr : #Element -> String -> String -> World -> String;
+let setAttr = \elem=> elem.attrib.set;
+
+let foo = Element "heythere";
+foo.setAttr "whats" "up" $W;
+```
+
+Another thing to think about is composability of IO functions in our model... Can we simply perform (<~) and (~>) operations with IO? Do we need to repeatedly supply IO? Let's see...
+
+```
+> let getLines = [getLine, getLine, getLine];
+> :t getLines;
+getLines : [IO -> String];
+> map ($IO ~>) getLines;
+Hi
+hey there
+what's up
+["Hi", "hey there", "what's up"]
+```
+Now let's say we want to have an operation which after each time the user inputs something, it prints "You said ___!" where ___ is what they wrote.
+
+Our first function `($IO ~>) : (IO -> a) -> a` will transform getLine into a String. The next function we want to do is transform the string into a new string: `String -> String`. So we can write `(\s => "You said: " ++ s ++ "!")`. Our last function prints out this string, type `String -> IO -> ()`. This is just `print`. So we can compose it as `($IO ~>) ~> (\s => "You said: " ++ s ++ "!") ~> (\s => print s $IO)`
+
+```
+> map (($IO ~>) ~>
+         (\s => "You said: " ++ s ++ "!") ~>
+           (\s => print s $IO)) getLines;
+```
+
+Of course, whether all inputs need to be collected first, or whether it will do this after each time... ? I think this would do the latter, since the functions its piping things through work one at a time. A good exercise would be to try rewriting it so it did the former.
+
+
+OK, getting back to mutable variables:
+
+Let's imagine that every mutable variable has a token which it inherits from its parent, which can be used to indicate that the mutation should actually perform. So for example:
+
+
+```
+sig turnBackgroundGreen : ();
+let turnBackgroundGreen = \ => dom.background := "#00FF00";
+```
+
+Well that seems ok but now we can't store it in a data structure: its affect will occur when it gets put in there, and more importantly, it won't have any effect when called in the future, because once it's computed, it's just a `()`. So we change it instead to use a token:
+
+```
+
+background : %DOM -> String;
+(:=) : a -> a -> a;
+
+(background := col tok) : DOM -> ();
+
+sig setBG : %DOM -> String -> DOMToken -> ();
+let setBG = \dom col tok => dom.(background := col tok), ();
+
+sig turnBackgroundGreen : DOMToken -> ();
+let turnBackgroundGreen = \domT => dom.setBG "#00FF00" domT;
+
+```
+
+We need to think about this because `setBG` really operates on the DOM, not on its background color, which gets replaced. This is the object-oriented style of things. With a mutating function, it mutates its arguments and returns nothing. We have the same kind of idea here. So where the mutation actually occurs must be in `dom`. But, it can pass its token into that mutator function, right? As in, theoretically, if `:=` had the dom token and the new value of the background color, it could go in and make the modification, right?
+
+```
+(:=) : a -> a -> Token -> a;
+
+sig setBG : %DOM -> String -> DOMToken -> ();
+let setBG = \dom col tok => dom.(background := col tok), ();
+
+sig turnGreen : DOMToken -> ();
+let turnGreen = \tok => dom.setBG "#00FF00" tok;
+
+sig turnBlue : DOMToken -> ();
+let turnBlue : DOMToken -> () = \tok => dom.setBG "#0000FF" tok;
+
+let colorResponses = {"green": turnGreen, "blue": turnBlue}
+let color = printLine "Enter a color: " $IO, getLine $IO;
+if colorResponses.containsKey color
+  then colorResponses[color] $DOM
+  else printLine ("I don't recognize " ++ color) $IO;
+
+
+```
+
+Then the key is that the `token` there comes from `dom`. Of course in reality, this isn't really enough info because there's no way that `:=` could know what it was supposed to be modifying (it needs to be able to associate "background" with a key in the object's dictionary, an offset in the bytes, etc. But we're obviously going to have to black-magic `:=` anyway, since it doesn't fit in with pure functionality. Maybe that's ok.

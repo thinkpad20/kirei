@@ -24,13 +24,20 @@ alice = Person "Alice" 19 Female;
 bob = Person "Bob" 23 Male;
 fido = Pet "Fido" Dog "Rottweiler";
 
+# Haskell (.)
 let (<~) : (b->c) -> (a->b) -> (a->c) = \f g => \x => f(g(x));
+# Haskell... nothing standard
 let (~>) : (a->b) -> (b->c) -> (a->c) = \f g => \x => g(f(x));
+# Haskell $
 let (!) : (a->b) -> a -> b = \f x => f x;
+# Haskell nothing standard
 let (.) : a -> (a->b) -> b = \x f => f x;
 
-print <~ name -< alice -< $IO;
-
+print <~ name ! alice ! $IO;
+# or
+$IO . alice . name ~> print;
+# or
+(alice . name ~> print) $IO;
 # or
 let printName: (Pet | Person) -> IO -> () = name ~> print;
 printName alice $IO;
@@ -44,3 +51,12 @@ alert "hey there!" ~> $.document.ready;
 
 # or
 ready (document $) (alert "hey there!");
+
+sig joinBy: [a] -> [[a]] -> [a];
+let joinBy = \ _   [] => []
+             | _   (a::[]) => a
+             | sep (a::as) => a ++ sep ++ joinBy sep as;
+
+
+imp Show for list =
+  show as = "[" ++ joinBy "," as ++ "]";

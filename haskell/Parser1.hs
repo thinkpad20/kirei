@@ -1,105 +1,77 @@
-module Parse where
+module Parser where
 
 import Text.ParserCombinators.Parsec
 import AST
-import Data.Monoid
-import Data.List
+import Data.Maybe
 
 sstring s = spaces >> string s
 schar c = spaces >> char c
 
-getIdent :: Parser Char -> Parser String
-getIdent p = spaces >> do
-  let validChars = ['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9'] ++ "_"
-  first <- p
-  rest <- optionMaybe $ many $ oneOf validChars
-  case rest of
-    Nothing -> return [first]
-    Just cs -> return (first:cs)
+pIdentifier :: Parser String
+pIdentifier = spaces >> many1 letter
 
-parseUpperName, parseLowerName :: Parser String
-parseUpperName = getIdent upper
-parseLowerName = getIdent lower
+pSingleName :: Parser TypeSig
+pSingleName = spaces >> do
+  name <- pIdentifier
+  return $ TypeName name
 
-parseStringLiteral :: Parser String
-parseStringLiteral = spaces >> do
-  char '"'
-  content <- many $ noneOf "\""
-  char '"'
-  return content
+pTypeName :: Parser TypeSig
+pTypeName = try pSingleName
+  <|> do schar '('
+         sigs <- pTypeSig
+         schar ')'
+         return sigs
 
-parseDouble :: Parser Double
-parseDouble = spaces >> do
+pTypeSig :: Parser TypeSig
+pTypeSig = pTypeName `chainl1` (sstring "->" >> return MapFrom)
+
+pSig :: Parser Sig
+pSig = do
+  sstring "sig" >> spaces
+  funcName <- pIdentifier
+  schar ':'
+  sig <- pTypeSig
+  return $ Sig funcName sig
+
+pDouble :: Parser Double
+pDouble = do
   ds <- many1 digit
   dot <- optionMaybe $ char '.'
   case dot of
     Nothing -> return $ read ds
-    _ -> many1 digit >>= \ds' -> return $ read (ds ++ "." ++ ds')
+    _ -> do
+      ds' <- many1 digit
+      return $ read (ds ++ "." ++ ds')
 
-parseNum, parseVarName, parseString :: Parser Term
-parseNum = fmap Num parseDouble
-parseVarName = fmap VarName parseLowerName
-parseString = fmap String parseStringLiteral
+pTerm :: Parser Term
+pTerm = fmap Number pDouble <|> fmap Name pIdentifier
 
-parseDec :: Parser Dec
-parseDec = do
-  vName <- parseLowerName
-  schar '='
-  expr <- parseExpr
-  return $ Dec vName patterns expr
+pSymbol :: Parser String
+pSymbol = many1 $ oneOf "+-*/><=&?^~"
 
-parseLet :: Parser Let
-parseLet = do
-  sstring "let"
-  decs <- sepBy1 parseDec (schar '|')
-  return $ Let decs
+pSymTerm :: Parser Term
+pSymTerm = spaces >> fmap Name pSymbol
 
-parseTerm :: Parser Term
-parseTerm = parseNum <|> parseVarName <|> parseString
+---- Listed from lowest to highest precedence. Higher prec will be parsed first.
+--pSymbolic = binary [pSymbol] logOr
+--logOr = binary [string "||"] logAnd
+--logAnd = binary [string "&&"] comparative
+--comparative = binary (map (try.string) ["<=", ">=", "<", ">", "==", "!="]) additive
+--additive = binary (map string ["+", "-"]) multiplicative
+--multiplicative = binary (map string ["*", "/", "%"]) exponential
+--exponential = binary [string "^"] unary
 
-parseIf :: Parser Expr
-parseIf = do
-  sstring "if"
-  cond <- parseExpr
-  sstring "then"
-  ifTrue <- parseExpr
-  sstring "else"
-  ifFalse <- parseExpr
-  return $ If cond ifTrue ifFalse
+--binary :: [Parser String] -> Parser Expr -> Parser Expr
+---- takes a list of operator parsers (ps) and the next higher-precedence rule,
+---- parses a binary expression using one of the operators in the list.
+--binary ps next = chainl1 next getOp
+--  where getOp = do spaces
+--                   s <- foldl1 (<|>) ps -- OR all of the parser rules in the list
+--                   spaces
+--                   return $ Binary s
 
-parseExpr :: Parser Expr
-parseExpr = try parseIf <|> fmap Term parseTerm
+pExpr :: Parser Expr
+pExpr = (fmap Term pTerm) `chainl1` (sstring "+" >> spaces >> return Apply)
 
-parseLetStmts :: Parser Statement
-parseLetStmts = do
-  ss <- sepBy1 parseLet (schar ',')
-  return $ LetStmts ss
-
--- putting this one on hold for now...
-parseImportStmt :: Parser Statement
-parseImportStmt = fmap ImportStmt (parseImport <|> parseFromImport) where
-  parseImport = do
-    sstring "import"
-    names <- (parseUpperName `sepBy1` char '.') `sepBy1` char ','
-    return $ Import names
-  parseFromImport = do
-    sstring "from"
-    modName <- parseUpperName `sepBy1` char '.'
-    sstring "import"
-    names <- (parseUpperName <|> parseLowerName) `sepBy1` char ','
-    return $ From modName names
-
-parseStatement :: Parser Statement
-parseStatement = try parseLetStmts
-  <|> fmap Expression parseExpr
-
-parseStatements :: Parser [Statement]
-parseStatements = many1 $ do 
-  stmt <- parseStatement
-  schar ';'
-  return stmt
-
-test :: String -> IO ()
-test input = case parse parseStatements "" input of
-  Right val -> putStrLn $ "Parsed: " ++ show val
-  Left err -> putStrLn $ "Error: " ++ show err
+test :: String -> Either ParseError Expr
+test str = parse pExpr "" str

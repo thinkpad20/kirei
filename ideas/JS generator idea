@@ -1,0 +1,158 @@
+# Skeletal idea for a JS generator:
+
+given our JavaScript types, we can see that we have a lot more JS types than Kirei types. But we can map from one to another because in a sense, JavaScript types are a superset of Kirei types. By which I mean, for example, a Kirei statement of
+
+```
+let fact = \x => if < x 2 then 1 else * x (fact (- x 1));
+```
+
+This should output in JavaScript to:
+
+```
+var fact = function(x) {
+  if (x < 2) {
+    return 1;
+  }
+  else {
+    return x * fact(x-1);
+  }
+}
+```
+
+What's the issue? Well, in an AST the Kirei looks like this:
+
+```
+         Assign
+         /     \
+      fact     Expr
+                 \
+               Lambda
+               /    \
+             [x]   Expr
+                      \
+                        If
+                     /   | \
+                    /    |  \
+                   /     |   \
+                 Expr   Expr Expr
+                 /       ...   ....
+               Apply
+               /   \
+              Expr Expr
+              /     \
+            Apply   Term
+            /  \      \
+          Expr Expr    2
+          /     \
+        Term    Term
+        /        \
+       <          x
+```
+
+So basically everything is an expression there. In the JavaScript, it's statement-based:
+
+```
+
+       Assign
+       /    \
+    fact    Expr
+             \
+             Function
+             /       \
+            [x]     [Statement]
+                             |
+                           [If]
+                     /       |        \
+                    /        |         \
+                   Expr  [Statement]  [Statement]
+                  /       |            \
+                 <      [Return]      [Return]
+                / \        |              \
+               x   2       1              *
+                                         / \
+                                        x   Call
+                                            /    \
+                                           fact  [Expr]
+                                                   |
+                                                  [-]
+                                                  / \
+                                                 x   1
+```
+So basically a single expression in Kirei could turn into any of a single expression (like "x < 2"), a single statement (like "return 1"), or a block list of statements (like ["return 1"]). So we need ways to compile any case:
+
+```
+eToExpr :: Expr -> J.Expr
+eToStatement :: Expr -> J.Statement
+eToBlock :: Expr -> J.Block
+```
+
+Then for example when compiling an if statement, we do:
+
+```
+cExpr (If c t f) = J.If $ eToExpr c $ eToBlock t $ eToBlock f
+```
+
+The important consideration then is what does `cExpr` need to return? Well it should return some kind of valid javascript element: seems like this should be a statement. But if we keep our data structures very minimal, don't define a statement type, and instead consider a let statement to be a kind of expression, where Let :: String -> Expr -> Maybe Expr -> Expr, then if we have just a let statement it's simple:
+
+```
+# kirei
+let foo = 5;
+
+# js
+var foo = 5;
+```
+
+So we could write:
+
+```
+cExpr (Let v e Nothing) = J.Assign $ v $ eToExpr e
+```
+
+But what if we had
+```
+# kirei
+let foo = \x => + x 5;
+let bar = foo 6;
+
+# js
+var foo = function(x) {
+  return x + 5;
+};
+
+var bar = foo(6);
+```
+
+So how do we deal with that now? Because the AST for the Kirei would look something like this:
+
+```
+Let "foo"
+  (Lambda ["x"] (Apply (Apply (Term "+") (Term "x")) (Term 5)))
+  (Just (Let "bar" (Apply (Term "foo") (Term 6))))
+```
+
+So the second let expression is contained INSIDE the first let expression.
+
+```
+cExpr (Let v e (Just nextExpr)) = ?
+```
+
+What do we do in this case? We can't convert a let statement with another expression following it into a single javascript statement. It needs to be two statements, the assignment and then whatever follows it. So then cExpr should actually return a block:
+
+```
+cExpr (Let v e Nothing) = Block [J.Assign $ v $ eToExpr e]
+cExpr (Let v e (Just next)) = Block [J.Assign $ v $ eToExpr e] <> cExpr next
+```
+
+So then we can reimagine the If compilation as
+
+```
+cExpr (If c t f) = Block [J.If $ eToExpr c $ eToBlock t $ eToBlock f]
+```
+
+So the last piece then to consider is function application...
+
+```
+cExpr (Apply a b) = ?
+```
+
+Well in pure lambda calculus we curry everything, but in the "real world", functions have a certain arity. We need to know what the arity of a and b are. For example if a is +, and b is a number, then we have `+ n`, which translates to `Apply (Term +) (Term n)`. Now naively in JavaScript we'd imagine this being converted to `plus(n)`, but `plus` in JavaScript takes two arguments. So what we really want in JS is `function (m) { plus(n, m) }`. This in AST form is `J.Function [m] (J.Call (Term plus) [Term n, Term m])`.

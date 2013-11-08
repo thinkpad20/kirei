@@ -1,4 +1,4 @@
-module Parser where
+module Parser3 where
 
 import Text.ParserCombinators.Parsec
 import Data.List
@@ -28,6 +28,7 @@ data Expr =
 
 data Term =
   Number Double
+  | Bool Bool
   | Variable String
   | Symbol String
   | String String
@@ -35,8 +36,6 @@ data Term =
   | Lambda [FreeVar] [Let] Expr
   deriving (Show)
 
-
-(.>) = flip (.)
 
 keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
 keySyms = ["->", "=>", ":", "|", "=", ";", "\\"]
@@ -116,6 +115,10 @@ pExpr :: Parser Expr
 pExpr = choice [pIf, pApply]
 
 pStatement :: Parser Statement
-pStatement = choice [Assign <$> pLet, Expr <$> pExpr]
+pStatement = choice [Assign <$> pLet,
+                     Expr <$> (pExpr <* keysim ";")]
+
+pStatements :: Parser [Statement]
+pStatements = many pStatement
 
 test parser = parse (spaces *> parser <* eof) ""

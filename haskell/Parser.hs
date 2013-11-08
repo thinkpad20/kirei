@@ -1,111 +1,100 @@
-module Parse where
+module Parser where
 
-import Text.ParserCombinators.Parsec
-import AST
-import Data.Monoid
-import Data.List
+import Text.ParserCombinators.Parsec hiding (optional)
+import Text.Parsec.Expr
+import Control.Applicative hiding ((<|>), many)
 
-sstring s = spaces >> string s
-schar c = spaces >> char c
+type Name = String
 
-getIdent :: Parser Char -> Parser String
-getIdent p = spaces >> do
-  let validChars = ['a'..'z'] ++ ['A'..'Z'] ++ ['0'..'9'] ++ "_"
-  first <- p
-  rest <- optionMaybe $ many $ oneOf validChars
-  case rest of
-    Nothing -> return [first]
-    Just cs -> return (first:cs)
+data Expr = Term Term
+          | Apply Expr Expr
+          | If Expr Expr Expr
+          | Lambda [Name] Expr
+          | Let String Expr (Maybe Expr)
+          deriving (Show)
 
-parseStringLiteral :: Parser String
-parseStringLiteral = spaces >> do
-  char '"'
-  content <- many $ noneOf "\""
-  char '"'
-  return content
+data Term = Bool Bool
+          | Num Double
+          | String String
+          | Identifier Name
+          | Symbol Name
+          | Parens Expr
+          deriving (Show)
 
-parseUpperName, parseLowerName :: Parser String
-parseUpperName = getIdent upper
-parseLowerName = getIdent lower
+keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
+keySyms = ["->", "=>", ":", "|", "=", ";", "\\"]
+lexeme p = p <* spaces
+schar = lexeme . char
 
-parseDouble :: Parser Double
-parseDouble = spaces >> do
+keyword k = lexeme . try $
+  string k <* notFollowedBy alphaNum
+
+keysim k = lexeme . try $ 
+  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&$")
+
+checkParse p = lexeme . try $ do
+  s <- p  
+  if s `elem` (keywords ++ keySyms)
+    then unexpected $ "reserved word " ++ show s
+    else return s
+
+pBool :: Parser Bool
+pBool = (True <$ keyword "True") <|> (False <$ keyword "False")
+
+pDouble :: Parser Double
+pDouble = lexeme $ do
   ds <- many1 digit
-  dot <- optionMaybe $ char '.'
-  case dot of
-    Nothing -> return $ read ds
-    _ -> many1 digit >>= \ds' -> return $ read (ds ++ "." ++ ds')
+  option (read ds) $ do
+    char '.'
+    ds' <- many1 digit
+    return $ read (ds ++ "." ++ ds')
 
-parseNum, parseVarName, parseString :: Parser Term
-parseNum = fmap Num parseDouble
-parseVarName = fmap VarName parseLowerName
-parseString = fmap String parseStringLiteral
+pString :: Parser String
+pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
-parsePattern :: Parser Pattern
-parsePattern = spaces >> do
-  n <- parseLowerName
-  return $ Param n
+pIdentifier :: Parser String
+pIdentifier = checkParse $ many1 letter
 
-parseDec :: Parser Dec
-parseDec = do
-  vName <- parseLowerName
-  patterns <- try parsePattern `sepBy` char ','
-  schar '='
-  expr <- parseExpr
-  return $ Dec vName patterns expr
+pSymbol :: Parser String
+pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
 
-parseLet :: Parser Let
-parseLet = do
-  sstring "let"
-  decs <- sepBy1 parseDec (schar '|')
-  return $ Let decs
+pParens :: Parser Expr
+pParens = between (schar '(') (schar ')') pExpr
 
-parseTerm :: Parser Term
-parseTerm = parseNum <|> parseVarName <|> parseString
+pTerm :: Parser Term
+pTerm = choice [ Bool       <$> pBool,
+                 Num        <$> pDouble,
+                 String     <$> pString,
+                 Identifier <$> pIdentifier,
+                 Symbol     <$> pSymbol,
+                 Parens     <$> pParens]
 
-parseIf :: Parser Expr
-parseIf = do
-  sstring "if"
-  cond <- parseExpr
-  sstring "then"
-  ifTrue <- parseExpr
-  sstring "else"
-  ifFalse <- parseExpr
-  return $ If cond ifTrue ifFalse
+pApply :: Parser Expr
+pApply = chainl1 pTerm' (pure Apply)
 
-parseExpr :: Parser Expr
-parseExpr = try parseIf <|> fmap Term parseTerm
+-- pulls "parens" expressions out of terms
+pTerm' :: Parser Expr
+pTerm' = do
+  term <- pTerm
+  case term of
+    Parens expr -> return expr
+    _ -> return $ Term term
 
-parseLetStmts :: Parser Statement
-parseLetStmts = do
-  ss <- sepBy1 parseLet (schar ',')
-  return $ LetStmts ss
+pIf :: Parser Expr
+pIf = If <$ keyword "if"   <*> pExpr 
+         <* keyword "then" <*> pExpr
+         <* keyword "else" <*> pExpr
 
--- putting this one on hold for now...
-parseImportStmt :: Parser Statement
-parseImportStmt = fmap ImportStmt (parseImport <|> parseFromImport) where
-  parseImport = do
-    sstring "import"
-    names <- (parseUpperName `sepBy1` char '.') `sepBy1` char ','
-    return $ Import names
-  parseFromImport = do
-    sstring "from"
-    modName <- parseUpperName `sepBy1` char '.'
-    sstring "import"
-    names <- (parseUpperName <|> parseLowerName) `sepBy1` char ','
-    return $ From modName names
+pLambda :: Parser Expr
+pLambda = Lambda <$ keysim "\\" <*> many pIdentifier
+                 <* keysim "=>" <*> pExpr
 
-parseStatement :: Parser Statement
-parseStatement = try parseLetStmts
-  <|> fmap Expression parseExpr
+pLet :: Parser Expr
+pLet = Let <$ keyword "let" <*> pIdentifier
+           <* keysim "=" <*> pExpr 
+           <* keysim ";" <*> optional pExpr
 
-parseStatements :: Parser [Statement]
-parseStatements = many1 $ do 
-  stmt <- parseStatement
-  schar ';'
-  return stmt
+pExpr :: Parser Expr
+pExpr = choice [pIf, pLambda, pLet, pApply]
 
-test :: String -> IO ()
-test input = case parse parseStatements "" input of
-  Right val -> putStrLn $ "Parsed: " ++ show val
-  Left err -> putStrLn $ "Error: " ++ show err
+test parser = parse (spaces *> parser <* eof) ""

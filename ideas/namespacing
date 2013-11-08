@@ -1,0 +1,88 @@
+sig length : %[a] -> Int;
+let length = \[] => 0 | \as => + 1 (tail as);
+
+assert "hello".length == 5;
+
+imp Eq for [a :~ Eq] =
+  [] == [] = True;
+  (a::_) == [] = False;
+  [] == (a::_) = False;
+  (a::as) == (b::bs) = a == b && as == bs;
+
+sig startsWith : %[a :~ Eq] -> String -> Bool;
+let startsWith = \s s' ->
+  let len' = s'.length;
+  if s.length > len' then False
+  else if s.take len' != s' then False
+  else True;
+
+# We could write take like this:
+sig take : String -> Int -> String;
+let take = \s 0 => [] | (s::ss) n => s :: ss.take n-1;
+
+assert "hello there!".take 5 == "hello";
+
+# or like this
+sig take' : Int -> String -> String;
+let take' = \0 s => [] | \n (s::ss) => s :: ss.(take n-1);
+
+# What does this mean? Well `take n-1` is of type String -> String,
+# so we can give it a string as an argument, fed from the left with
+# (.), and we'll have a String as a result. This does indeed though
+# suggest that we can simply write
+
+sig (.) : a -> (a -> b) -> b;
+let (.) = \x f => f x;
+
+# So then for example,
+
+"hello there!".take 5 == (take "hello there!") 5 == "hello";
+
+"hello there!".(take' 5) == take' 5 "hello there!" == "hello";
+
+# And we could even say:
+
+let getAlpha : Int -> String = ['a'..'z'].take;
+
+# So now we have a way to use "member functions" with currying.
+# What about making data structures? Well let's look at lists:
+
+data [a] = [] | [a];
+
+let head : [a] -> a = \(a::as) => a;
+
+let foo = [1,2,3,4];
+
+assert foo.head == 1;
+
+# Then how about more complicated ones? Like dictionaries?
+
+let foo = {%
+  hello: "there",
+  data: {%
+    foo: "bar"
+  %}
+  bloops: ["blops", "blorps"]
+%}
+
+# We want to be able to say foo.data, foo.bloops, etc
+# So what we need is
+sig data: $foo -> {% foo: "bar" %}
+# here $foo is a temporary type created by the creation of foo.
+# in effect, putting the key data in foo also creates the function
+# which takes foo and returns another object (which doesn't have
+# a name
+# This might be a dumb way to do things... just thinking out loud tho :)
+
+
+
+# Then we just need to ensure that our associativity works out, and
+# that we can namespace properly, and that we can define arbitrary
+# data structures.
+
+data Point = Point Int Int;
+
+sig x : Point -> Int;
+let x = \(Point a _) -> a;
+
+let p = Point 3 4;
