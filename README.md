@@ -139,7 +139,7 @@ Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expressi
 
 ### Current status and usage
 
-Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`). Of course there are many other things that are missing, like producing javascript files, type checking and token system, modules, namespaces...
+Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is).
 
 If you have a Haskell platform, you should be good to go. You can try it out like so:
 
@@ -157,3 +157,19 @@ var fact = function (n) {if (lt(n)(2.0)) {return 1.0;} else {return mult(n)(fact
 ```
 
 Yay! Note that when writing a `\` in GHCi you need to write it with two backslashes so that it doesn't interpret it as an escape sequence.
+
+## Things left to do
+
+A lot!
+
+* right now all functions are single-argument (we'll later change this for performance and ease of readability)
+* we don't yet support infix symbols (everything is in a lisp-like prefix notation)
+* functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`) 
+* We can't produce javascript files, just some basic code
+* Standard library is non-existent
+* No pretty printing
+* No type system yet
+* No pattern matching yet
+* No TCO
+* Token system
+* modules, namespaces, dealing with JS objects......
