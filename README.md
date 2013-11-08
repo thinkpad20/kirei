@@ -46,10 +46,12 @@ getTyped $IO;
 And its translation to an imperative language (we're currently using JavaScript) is straightforward:
 
 ```javascript
-var getLine = function () {
+var getTyped = function () {
   var s = getLine();
   return println("You typed: " + s);
 };
+
+getTyped();
 ```
 
 ### The Token System
