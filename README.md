@@ -57,6 +57,8 @@ var getTyped = function () {
 getTyped();
 ```
 
+(Note that the `io` argument disappeared in the JavaScript.)
+
 ### The Token System
 
 Kirei is strictly evaluated by default, but attempts to meld that with a good degree of referential transparency. With its token system, its able to enforce a strong degree of purity in a way that's simple to understand. By extension, a key idea is that once provided with all of its arguments, a function should be considered to be completely determined, and its calculation can be performed. This works for both pure functions, and those with effects, via the token system.
@@ -137,7 +139,7 @@ Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expressi
 
 ### Current status and usage
 
-Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`).
+Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`). Of course there are many other things that are missing, like producing javascript files, type checking and token system, modules, namespaces...
 
 If you have a Haskell platform, you should be good to go. You can try it out like so:
 
