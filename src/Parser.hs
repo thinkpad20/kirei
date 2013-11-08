@@ -51,7 +51,7 @@ pString :: Parser String
 pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
 pVariable :: Parser String
-pVariable = checkParse $ many1 letter
+pVariable = checkParse $ many1 (letter <|> char '.')
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
@@ -60,29 +60,26 @@ pParens :: Parser Expr
 pParens = between (schar '(') (schar ')') pExpr
 
 pTerm :: Parser Expr
-pTerm = choice [ Bool <$> pBool,
-                 Number   <$> pDouble,
-                 String   <$> pString,
-                 Var <$> pVariable,
-                 Symbol   <$> pSymbol,
+pTerm = choice [ Bool   <$> pBool,
+                 Number <$> pDouble,
+                 String <$> pString,
+                 Var    <$> pVariable,
+                 Symbol <$> pSymbol,
                  pParens,
                  pLambda ]
 
 pApply :: Parser Expr
 pApply = pTerm >>= \res -> parseRest res where
   parseRest res = do
-    f <- pure Apply -- pull the constructor out of the monad
     y <- pTerm -- run the parser again
     case y of
-      (Symbol s) -> parseRest (f y res)
-      _ -> parseRest (f res y)
-    <|> return res -- if at any point the second parse fails,
+      (Symbol s) -> parseRest (Apply y res) -- if a symbol, flip the order
+      _ -> parseRest (Apply res y) -- otherwise, keep chainin' along
+    <|> return res -- at some point the second parse will fail; then
                    -- return what we have so far
 
 pComma :: Parser Expr
 pComma = chainl1 (pExpr <* char ',' <* spaces) (pure Comma)
-
-
 
 pIf :: Parser Expr
 pIf = If <$ keyword "if"   <*> pExpr

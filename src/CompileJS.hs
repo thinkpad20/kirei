@@ -38,9 +38,6 @@ toString s = (map fromChar ~> concat) s where
   fromChar '|' = "pipe"
   fromChar '!' = "bang"
 
--- | Should make a separate function for top-level statements,
---   so that it doesn't return
-
 eToBlk :: Expr -> J.Block
 eToBlk (If c t f) = J.single $ J.If (eToE c) (eToBlk t) (eToBlk f)
 eToBlk (Let v e e') = case e' of
@@ -60,4 +57,13 @@ eToE (Let v e e') = error $ "Let statement in an expression"
 eToE (Lambda xs e) = J.Term $ J.Function xs $ eToBlk e
 eToE (Apply a b) = J.Call (eToE a) [eToE b]
 
-toJs = grab ~> eToBlk
+-- Used for top-level statements only
+compile :: Expr -> J.Block
+compile (If c t f) = J.single $ J.If (eToE c) (compile t) (compile f)
+compile (Let v e e') = case e' of
+  Nothing -> J.single $ J.Assign v $ eToE e
+  Just e' -> eToBlk (Let v e Nothing) <> compile e'
+compile (Apply a b) = J.single $ J.Expr $ J.Call (eToE a) [eToE b]
+compile e = J.single $ J.Expr $ eToE e
+
+toJs = grab ~> compile

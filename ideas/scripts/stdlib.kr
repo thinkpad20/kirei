@@ -1,0 +1,30 @@
+module std $IO =
+
+data List a ::= [] | a :: List a;
+
+sig head : List a -> a;
+export head (a::_) = a;
+
+sig tail : List a -> List a;
+export tail (_::as) = as;
+
+sig (!) : a -> (a->b) -> b;
+export x ! f = f x;
+
+sig (~>)  : (a->b) -> (b->c) -> (a->c);
+export f ~> g = \x => g (f x);
+
+sig (<~) : (b->c) -> (a->b) -> (a->c);
+export f <~ g = \x => f (g x);
+
+;
+
+
+# pretend this is another file
+bring "stdlib" $IO;
+
+let printContents : String -> IO -> () = \fname io =>
+  let f = open fname io;
+  print f!getContents io;
+
+$IO!(map (\s => printContents s $, println "" $) ["hello.txt", " world.txt"];
