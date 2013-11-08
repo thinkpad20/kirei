@@ -38,7 +38,7 @@ This is a signature in Kirei, meaning that `print` takes an `IO` token and a str
 
 ```
 sig printFuncs : [IO -> ()];
-let printFuncs = [print "hello", print "world!"]
+let printFuncs = [print "hello", print "world!"];
 ```
 
 Now, we can see that `printFuncs` contains functions, not values. So if we want to print all of these guys, we need to pass in an IO token! How can we do that?
@@ -47,7 +47,7 @@ Now, we can see that `printFuncs` contains functions, not values. So if we want 
 [p $IO | p <- printFuncs];
 ```
 
-This list comprehension means "take each element `p` from the list `printFuncs` and put the result of calling `p` with the argument `$IO` into a new list". We could also write this as
+The `$IO` thingamajig is the top-level IO token: accessible only by module-scope functions (a.k.a. those declared outside of the scope of any subfunction), it's a global constant which allows module-scope functions to pass tokens to their subfunctions. More on this later. Anyway, this list comprehension means "take each element `p` from the list `printFuncs` and put the result of calling `p` with the argument `$IO` into a new list". We could also write this as
 
 ```
 map ($IO !) printFuncs;
