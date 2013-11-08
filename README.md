@@ -8,9 +8,8 @@ Haskell is an amazing language: with incredible expressive power coupled with gr
 In addition, its use of Monads for these concepts makes it difficult to translate Haskell to other high-level languages in a straightforward manner. For example, take some simple code like
 
 ```haskell
-getTyped :: IO ()
 getTyped = do
-  putStr "Write something: "
+  putStrLn "Write something:"
   s <- getLine
   putStrLn $ "You typed: " ++ s
 
@@ -18,11 +17,11 @@ main = getTyped
 
 ```
 
-There's no good translation of this into an imperative language. You might think it could be something like this:
+There's no straightforward translation of this into an imperative language. You might think it could be something like this:
 
 ```python
 def getTyped():
-    s = raw_input("Write something: ")
+    s = raw_input("Write something:\n")
     print "You typed: " + s
 
 getTyped()
@@ -35,18 +34,19 @@ Kirei moves to take many of the best parts from Haskell, such as its static typi
 In Kirei, the code above might look something like this:
 
 ```
-sig getTyped :: IO -> ();
 let getTyped io =
+  println "Write something:" io,
   let s = getLine io;
   println ("You typed: " ++ s) io;
 
 getTyped $IO;
 ```
 
-And its translation to an imperative language (we're currently using JavaScript) is straightforward:
+And its translation to an imperative language (we're currently using JavaScript) is straightforward (assume all functions have been defined somewhere):
 
 ```javascript
 var getTyped = function () {
+  println("Write something:");
   var s = getLine();
   return println("You typed: " + s);
 };
