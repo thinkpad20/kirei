@@ -5,7 +5,52 @@
 
 Haskell is an amazing language: with incredible expressive power coupled with great performance and excellent guarantees of safety, it's truly a great achievement. However, Haskell can be a very difficult language to use for beginners, and many things which are straightforward to do in imperative langauges, particularly in dealing with IO and mutable state, are entirely different in Haskell, demanding a great deal of effort to gain facility.
 
+In addition, its use of Monads for these concepts makes it difficult to translate Haskell to other high-level languages in a straightforward manner. For example, take some simple code like
+
+```haskell
+getTyped :: IO ()
+getTyped = do
+  putStr "Write something: "
+  s <- getLine
+  putStrLn $ "You typed: " ++ s
+
+main = getTyped
+
+```
+
+There's no good translation of this into an imperative language. You might think it could be something like this:
+
+```python
+def getTyped():
+    s = raw_input("Write something: ")
+    print "You typed: " + s
+
+if __name__ == "__main__": getTyped()
+```
+
+But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads and lambda functions, while the Python is simply a series of instructions, which happen to be doing IO.
+
 Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but (a) to signify that this function is authorized to perform the action requested, and (b) to distinguish between functions which perform some actions which have effects, and the actual running of those functions.
+
+In Kirei, the code above might look something like this:
+
+```
+sig getTyped :: IO -> ();
+let getTyped io =
+  let s = getLine io;
+  println ("You typed: " ++ s) io;
+
+getTyped $IO;
+```
+
+And its translation to an imperative language (we're currently using JavaScript) is straightforward:
+
+```javascript
+var getLine = function () {
+  var s = getLine();
+  return println("You typed: " + s);
+};
+```
 
 ### The Token System
 
