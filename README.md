@@ -8,9 +8,8 @@ Haskell is an amazing language: with incredible expressive power coupled with gr
 In addition, its use of Monads for these concepts makes it difficult to translate Haskell to other high-level languages in a straightforward manner. For example, take some simple code like
 
 ```haskell
-getTyped :: IO ()
 getTyped = do
-  putStr "Write something: "
+  putStrLn "Write something:"
   s <- getLine
   putStrLn $ "You typed: " ++ s
 
@@ -18,39 +17,47 @@ main = getTyped
 
 ```
 
-There's no good translation of this into an imperative language. You might think it could be something like this:
+There's no straightforward translation of this into an imperative language. You might think it could be something like this:
 
 ```python
 def getTyped():
-    s = raw_input("Write something: ")
+    s = raw_input("Write something:\n")
     print "You typed: " + s
 
-if __name__ == "__main__": getTyped()
+getTyped()
 ```
 
-But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads and lambda functions, while the Python is simply a series of instructions, which happen to be doing IO.
+But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads, operators overloaded via type classes, and lambda functions. On the other hand, the Python is simply a series of instructions, which happen to be doing IO.
 
-Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but (a) to signify that this function is authorized to perform the action requested, and (b) to distinguish between functions which perform some actions which have effects, and the actual running of those functions.
+Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but 
+
+1. to signify that this function is authorized to perform the action requested, and 
+2. to distinguish between functions which perform some actions which have effects, and the actual running of those functions.
 
 In Kirei, the code above might look something like this:
 
 ```
-sig getTyped :: IO -> ();
 let getTyped io =
+  println "Write something:" io,
   let s = getLine io;
   println ("You typed: " ++ s) io;
 
 getTyped $IO;
 ```
 
-And its translation to an imperative language (we're currently using JavaScript) is straightforward:
+And its translation to an imperative language (we're currently using JavaScript) is straightforward (assume all functions have been defined somewhere):
 
 ```javascript
-var getLine = function () {
+var getTyped = function () {
+  println("Write something:");
   var s = getLine();
   return println("You typed: " + s);
 };
+
+getTyped();
 ```
+
+(Note that the `io` argument disappeared in the JavaScript.)
 
 ### The Token System
 
@@ -126,13 +133,13 @@ sig foo : Int -> Int;
 let foo a = fireMissiles a, a + 1; #OK, fireMissiles has no effect
 ```
 
-We have a rule that `IO` tokens cannot be returned inside of closures. This makes `bar` illegal, and for the exact reason we want: otherwise we'd have no way of knowing if `bar` did some side-effecty thing before it returned some innocuous `()`. Basically, tokens are only allowed in completely specified expressions. `let contents = getContents "foo.txt" $IO` is ok. But `let unsafeGetContents = \s => getContents s $IO` is not OK, because a token is being "wrapped up" in a container which hides its existence. A good algorithm to properly detect and make illegal this sort of usage is one of the things I need to work on, but it should be doable.
+We have a rule that `IO` tokens cannot be returned inside of closures. This makes `bar` illegal, and for the exact reason we want: otherwise we'd have no way of knowing if `bar` did some side-effecty thing like firing missiles before it returned some innocuous `()`. Basically, tokens are only allowed in completely specified expressions. `let contents = getContents "foo.txt" $IO` is ok. But `let unsafeGetContents = \s => getContents s $IO` is not OK, because a token is being "wrapped up" in a container which hides its existence. A good algorithm to properly detect and make illegal this sort of usage is one of the things I need to work on, but it should be doable.
 
 Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expression, which would mean it would produce no side-effect. If it didn't perform IO and `a` were all it needed to run, then its value would be computed but not used; this is because we're a strict language.
 
 ### Current status and usage
 
-Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read). Also, right now all functions are single-argument (we'll later change this for performance and ease of readability), we don't yet support infix symbols (everything is in a lisp-like prefix notation), and functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`).
+Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is).
 
 If you have a Haskell platform, you should be good to go. You can try it out like so:
 
@@ -149,4 +156,20 @@ var fact = function (n) {if (lt(n)(2.0)) {return 1.0;} else {return mult(n)(fact
 *CompileJS>
 ```
 
-Yay!
+Yay! Note that when writing a `\` in GHCi you need to write it with two backslashes so that it doesn't interpret it as an escape sequence.
+
+## Things left to do
+
+A lot!
+
+* right now all functions are single-argument (we'll later change this for performance and ease of readability)
+* we don't yet support infix symbols (everything is in a lisp-like prefix notation)
+* functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => + a 1;`) 
+* We can't produce javascript files, just some basic code
+* Standard library is non-existent
+* No pretty printing
+* No type system yet
+* No pattern matching yet
+* No TCO
+* Token system
+* modules, namespaces, dealing with JS objects......
