@@ -154,14 +154,20 @@ let b = a + 3;
 let c = if foobar == 0 then a else abs (max a b);
 ```
 
-Note that each `let` must terminate with a `;`. Functions can be defined with a lambda expression, the syntax of which is:
+Expressions can contain `let` statements internally:
+
+```
+let foo = let bar = 3; bar + 4;
+```
+
+The `let` and `;` must match like opening and closing parentheses. This association lets us ignore whitespace entirely.
+
+Functions are another kind of expression, namely lambda expressions, and can be defined with the following syntax:
 
 * `\` 
 * one or more arguments (identifiers)
 * `=>`
-* zero or more internal `let` expressions
 * the expression to be returned
-* `;`
 
 So, for example:
 
@@ -173,7 +179,7 @@ let fact2 = \n =>
   factR n;
 ```
 
-And that's about it. Of course, future syntax will be introduced for pattern matching, type signatures, type and class declarations, data structure literals, etc.
+And that's about it. Of course, future syntax will be introduced for comments, pattern matching, type signatures, type and class declarations, data structure literals, etc.
 
 ### Current status and usage
 
@@ -213,4 +219,5 @@ A lot!
 * No pattern matching yet
 * No TCO or any other optimizations
 * Token system hasn't been implemented yet
+* A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
 * modules, namespaces, etc...
