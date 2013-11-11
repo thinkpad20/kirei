@@ -45,7 +45,7 @@ let getTyped io =
 getTyped $IO;
 ```
 
-And its translation to an imperative language (we're currently using JavaScript) is straightforward (assume all functions have been defined somewhere):
+And its translation to an imperative language (we're currently using JavaScript) is straightforward (`println` and `getLine` here are of course not standard JS functions, but they wrap standard functions.):
 
 ```javascript
 var getTyped = function (io) {
@@ -56,8 +56,6 @@ var getTyped = function (io) {
 
 getTyped($IO);
 ```
-
-(`println` and `getLine` here are of course not standard JS functions, but they wrap standard functions.)
 
 ### The Token System
 
@@ -134,7 +132,7 @@ let foo a = fireMissiles a, a + 1; # OK, fireMissiles has no effect
 
 We have a rule that `IO` tokens cannot be returned inside of closures. This makes `bar` illegal, and for the exact reason we want: otherwise we'd have no way of knowing if `bar` did some side-effecty thing like firing missiles before it returned some innocuous number. Basically, tokens are only allowed in completely specified expressions. `let contents = getContents "foo.txt" $IO` is ok. But `let unsafeGetContents = \s => getContents s $IO` is not OK, because a token is being "wrapped up" in a container which hides its existence. A good algorithm to properly detect and make illegal this sort of usage is one of the things I need to work on, but it should be doable.
 
-Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expression, which would mean it would produce no side-effect. If it didn't perform IO and `a` were all it needed to run, then its value would be computed but not used; this is because we're a strict language. The unnecessary computation might be costly (indeed, it may not terminate), but it won't produce side-effects. Of course, compile-time optimizations will likely be able to remove many or all unused function calls, bringing the performance in line with a lazily evaluated language.
+Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expression, which would mean it would produce no side-effect. If it didn't perform IO and `a` were all it needed to run, then its value would be computed but not used; this is because we're a strict language. The unnecessary computation might be costly (indeed, it may not terminate), but it won't produce side-effects. Of course, compile-time optimizations will likely be able to remove many or all unused function calls. A benefit of functional purity is that if a function can be proven to be pure, and a call to it is made but not used, we can guarantee that the removal of the call will not affect the programs' correctness.
 
 ### Quick syntax overview:
 
@@ -222,4 +220,5 @@ A lot!
 * No TCO or any other optimizations
 * Token system hasn't been implemented yet
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
+* We'd like to support anonymous recursion, so that we can write recursion into lambda functions without names
 * modules, namespaces, etc...
