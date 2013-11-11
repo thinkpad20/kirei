@@ -210,9 +210,9 @@ A lot!
 * ~~we don't yet support infix symbols (everything is in a lisp-like prefix notation)~~ done!
 * no operator precedences, user-defined or otherwise. Use parentheses to disambiguate.
 * functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => a + 1;`) 
-* We can't produce javascript files, just some basic code
+* ~~We can't produce javascript files, just some basic code~~ done! But not very robust
 * haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way
-* Standard library is non-existent
+* Standard library is non-existent (ALMOST non-existent. Basic arithmetic and logical functions are defined)
 * No pretty printing of the generated javascript code
 * No arrays or any builtin data structures
 * No type system yet
