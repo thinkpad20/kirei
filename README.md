@@ -27,7 +27,7 @@ def getTyped():
 getTyped()
 ```
 
-But in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads, operators overloaded via type classes, and lambda functions. On the other hand, the Python is simply a series of instructions, which happen to be doing IO.
+But while its syntax and outward behavior is similar, in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads, operators overloaded via type classes, and lambda functions. On the other hand, the Python is simply a series of instructions, which happen to be doing IO.
 
 Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but 
 
@@ -56,6 +56,8 @@ var getTyped = function (io) {
 
 getTyped($IO);
 ```
+
+(`println` and `getLine` here are of course not standard JS functions, but they wrap standard functions.)
 
 ### The Token System
 
