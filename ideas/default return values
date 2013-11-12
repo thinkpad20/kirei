@@ -1,0 +1,14 @@
+class Lookup container key value =
+  sig lookup : %container -> key -> Maybe value;
+;
+
+imp Lookup for [a] =
+  let [].lookup _ = Nothing
+  | (a::_).lookup 0 = Just a
+  | (_::as).lookup n = as.lookup (n - 1);
+;
+
+sig (!!) : (container :~ Lookup (k (v :~ Monoid)) -> k -> v;
+let m !! k = case m.lookup k of
+  Nothing  => mzero
+  | Just v => v;

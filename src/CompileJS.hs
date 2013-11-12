@@ -7,23 +7,24 @@ import Control.Monad.State
 import Control.Monad.Identity
 import Data.Monoid
 
-(<~) = (.)
 (~>) = flip (.)
+infixr 9 ~>
+
+preamble = "var std = require(\"./std\");\n\n"
 
 toString :: String -> String
-toString ">" = "gt"
-toString "<" = "lt"
-toString "=" = "eq"
-toString ">=" = "geq"
-toString "<=" = "leq"
-toString "~" = "neg"
-toString "+" = "add"
-toString "-" = "sub"
-toString "*" = "mult"
-toString "/" = "div"
-toString "&&" = "and"
-toString "||" = "or"
-toString "!" = "not"
+toString ">" = "std.gt"
+toString "<" = "std.lt"
+toString "=" = "std.eq"
+toString ">=" = "std.geq"
+toString "<=" = "std.leq"
+toString "~" = "std.neg"
+toString "+" = "std.add"
+toString "-" = "std.sub"
+toString "*" = "std.mult"
+toString "/" = "std.div"
+toString "&&" = "std.and"
+toString "||" = "std.or"
 toString s = (map fromChar ~> concat) s where
   fromChar '>' = "gt"
   fromChar '<' = "lt"
@@ -37,6 +38,7 @@ toString s = (map fromChar ~> concat) s where
   fromChar '&' = "amp"
   fromChar '|' = "pipe"
   fromChar '!' = "bang"
+  fromChar '$' = "dol"
 
 eToBlk :: Expr -> J.Block
 eToBlk (If c t f) = J.single $ J.If (eToE c) (eToBlk t) (eToBlk f)
@@ -67,3 +69,5 @@ compile (Apply a b) = J.single $ J.Expr $ J.Call (eToE a) [eToE b]
 compile e = J.single $ J.Expr $ eToE e
 
 toJs = grab ~> compile
+
+renderJS = toJs ~> J.render 0

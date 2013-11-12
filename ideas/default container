@@ -1,0 +1,21 @@
+# One idea that might simplify things with lookups is to use a class which has some sort of default "zero" member (Monoid?) For example, if what you're looking up is a string, it might be acceptible if it simply returns an empty string rather than failing if it doesn't find something:
+
+class DefaultContainer cont =
+  sig (!!) : cont k v -> k -> v;
+;
+
+imp DefaultContainer for (m : Map a String) =
+  let m !! a = case m!lookup a of
+    Nothing => ""
+    | Just s => s;
+;
+
+imp DefaultContainer for (ss: [String]) =
+  let [] !! _ = ""
+  | (s::ss) !! 0 = s
+  | (s::ss) !! n = ss !! (n - 1);
+;
+
+
+# if no args were supplied, this will simply say "Hello, !"
+println (join ["Hello, ", args !! 1, "!"]) $IO;

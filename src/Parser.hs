@@ -1,4 +1,4 @@
-module Parser where
+module Parser (grab, Expr(..)) where
 
 import Text.ParserCombinators.Parsec
 import Data.List
@@ -66,7 +66,7 @@ pTerm = choice [ Bool   <$> pBool,
                  Var    <$> pVariable,
                  Symbol <$> pSymbol,
                  pParens,
-                 pLambda ]
+                 pLambda]
 
 pApply :: Parser Expr
 pApply = pTerm >>= \res -> parseRest res where
