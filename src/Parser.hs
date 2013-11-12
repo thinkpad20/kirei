@@ -15,7 +15,8 @@ data Expr =
   | If Expr Expr Expr
   | Let Name Expr (Maybe Expr)
   | Apply Expr Expr
-  | Comma Expr Expr
+  | Dotted Expr Expr
+  | Comma [Expr]
   | Lambda [Name] Expr
   deriving (Show)
 
@@ -28,7 +29,7 @@ keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
 keysim k = lexeme . try $
-  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&$")
+  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&")
 
 checkParse p = lexeme . try $ do
   s <- p
@@ -51,7 +52,7 @@ pString :: Parser String
 pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
 pVariable :: Parser String
-pVariable = checkParse $ many1 (letter <|> char '.')
+pVariable = checkParse $ many1 (letter <|> char '$')
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
@@ -69,7 +70,7 @@ pTerm = choice [ Bool   <$> pBool,
                  pLambda]
 
 pApply :: Parser Expr
-pApply = pTerm >>= \res -> parseRest res where
+pApply = pDotted >>= \res -> parseRest res where
   parseRest res = do
     y <- pTerm -- run the parser again
     case y of
@@ -78,8 +79,13 @@ pApply = pTerm >>= \res -> parseRest res where
     <|> return res -- at some point the second parse will fail; then
                    -- return what we have so far
 
-pComma :: Parser Expr
-pComma = chainl1 (pExpr <* char ',' <* spaces) (pure Comma)
+pDotted :: Parser Expr
+pDotted = pTerm >>= \res -> parseRest res where
+  parseRest res = do
+    schar '.'
+    y <- pExpr
+    parseRest (Dotted res y)
+    <|> return res
 
 pIf :: Parser Expr
 pIf = If <$ keyword "if"   <*> pExpr
@@ -91,12 +97,23 @@ pLambda = Lambda <$ keysim "\\" <*> many pVariable
                  <* keysim "=>" <*> pExpr
 
 pLet :: Parser Expr
-pLet = Let <$ keyword "let" <*> pVariable
-           <* keysim "=" <*> pExpr
-           <* keysim ";" <*> optionMaybe pExpr
+pLet = do
+  keyword "let"
+  fname <- pVariable
+  args <- many pVariable
+  keysim "="
+  expr <- pExpr
+  keysim ";"
+  next <- optionMaybe pExpr
+  return $ Let fname (f args expr) next where
+    f [] e = e
+    f (a:as) e = Lambda [a] (f as e)
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pApply, pLet, pTerm]
+pExpr = choice [pIf, pLet, pApply]
+
+pExprs :: Parser Expr
+pExprs = Comma <$> pExpr `sepBy` (schar ',')
 
 grab s = case parse (spaces *> pExpr
                      <* many (keysim ";")

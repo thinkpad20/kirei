@@ -11,18 +11,14 @@ import Control.Applicative ((<$>))
 
 usage = "Usage: kirei <input filename(s)> [output filename]"
 
-(!) = flip ($)
-infixr 0 !
-
 main = do
   args <- getArgs
   case args of
     [] -> putStrLn usage
     (fname:_) -> do
       src <- readFile fname
-      js <- toJs src ! show ~> (preamble ++) ~> return
-      writeFile (getName fname) js
-      "Wrote output to " ++ getName fname ! putStrLn
+      writeFile (getName fname) (preamble ++ renderJS src)
+      putStrLn $ "Wrote output to " ++ getName fname
   where
     getName = splitOn "." ~> init ~> intercalate "." ~> (++ ".js")
 

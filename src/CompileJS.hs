@@ -10,7 +10,7 @@ import Data.Monoid
 (~>) = flip (.)
 infixr 9 ~>
 
-preamble = "var std = require(\"./std\");\n\n"
+preamble = "var std = require(\"./std\");\nvar $IO = 0;\n"
 
 toString :: String -> String
 toString ">" = "std.gt"
@@ -38,7 +38,7 @@ toString s = (map fromChar ~> concat) s where
   fromChar '&' = "amp"
   fromChar '|' = "pipe"
   fromChar '!' = "bang"
-  fromChar '$' = "dol"
+  fromChar '@' = "at"
 
 eToBlk :: Expr -> J.Block
 eToBlk (If c t f) = J.single $ J.If (eToE c) (eToBlk t) (eToBlk f)
@@ -46,6 +46,7 @@ eToBlk (Let v e e') = case e' of
   Nothing -> J.single $ J.Assign v $ eToE e
   Just e' -> eToBlk (Let v e Nothing) <> eToBlk e'
 eToBlk (Apply a b) = J.single $ J.Return $ J.Call (eToE a) [eToE b]
+eToBlk (Comma es) = J.Block $ map (eToE ~> J.Expr) es
 eToBlk e = J.single $ J.Return $ eToE e
 
 eToE :: Expr -> J.Expr
@@ -55,9 +56,11 @@ eToE (String s) = J.Term $ J.String s
 eToE (Var v) = J.Term $ J.Var v
 eToE (Symbol s) = J.Term $ J.Var $ toString s
 eToE (If c t f) = J.Ternary (eToE c) (eToE t) (eToE f)
-eToE (Let v e e') = error $ "Let statement in an expression"
 eToE (Lambda xs e) = J.Term $ J.Function xs $ eToBlk e
 eToE (Apply a b) = J.Call (eToE a) [eToE b]
+eToE (Dotted e1 e2) = J.Dot (eToE e1) (eToE e2)
+eToE (Let v e e') = error "Let statement in an expression"
+eToE (Comma es) = error "Comma in an expression"
 
 -- Used for top-level statements only
 compile :: Expr -> J.Block
@@ -71,3 +74,5 @@ compile e = J.single $ J.Expr $ eToE e
 toJs = grab ~> compile
 
 renderJS = toJs ~> J.render 0
+
+prettyPrintJS = renderJS ~> putStrLn
