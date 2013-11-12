@@ -213,7 +213,7 @@ A lot!
 * ~~We can't produce javascript files, just some basic code~~ done! But not very robust
 * haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way
 * Standard library is non-existent (ALMOST non-existent. Basic arithmetic and logical functions are defined)
-* No pretty printing of the generated javascript code
+* ~~No pretty printing of the generated javascript code~~ done!
 * No arrays or any builtin data structures
 * No type system yet
 * No pattern matching yet
