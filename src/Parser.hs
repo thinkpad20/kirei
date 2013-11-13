@@ -26,7 +26,7 @@ skip = spaces *> (lineComment <|> spaces) where
   lineComment = do
     char '#'
     many $ noneOf "\n"
-    char '\n'
+    newline <|> (eof >> return ' ')
     return ()
 
 keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
