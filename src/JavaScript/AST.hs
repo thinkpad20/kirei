@@ -39,29 +39,28 @@ instance Show Term where
   show (Var n) = n
   show (String s) = show s
   show This = "this"
-  show (Function ns blk) = concat ["function (",
-                                 intercalate ", " ns,
-                                 ") {", show blk, "}"]
+  show (Function ns blk) = c ["function(", sep ns, "){", show blk, "}"]
+    where { c = concat; sep = intercalate "," }
   show (Bool True) = "true"
   show (Bool False) = "false"
 
 instance Show Expr where
   show (Term term) = show term
   show (Dot e1 e2) = show e1 ++ "." ++ show e2
-  show (Call e es) = concat [show e, "(", intercalate ", " (map show es), ")"]
-  show (Binary op e1 e2) = concat [show e1, " ", op, " ", show e2]
+  show (Call e es) = concat [show e, "(", intercalate "," (map show es), ")"]
+  show (Binary op e1 e2) = concat [show e1, op, show e2]
   show (Unary op e) = op ++ show e
-  show (Ternary e1 e2 e3) = concat ["(", show e1, " ? ", show e2,
-                                    " : ", show e3, ")"]
+  show (Ternary e1 e2 e3) = concat ["(", show e1, "?", show e2,
+                                    ":", show e3, ")"]
 
 instance Show Statement where
   show (Expr e) = show e ++ ";"
-  show (If' e b) = concat ["if (", show e, ") {", show b, "}"]
-  show (If e b1 b2) = concat [show (If' e b1), " else {", show b2, "}"]
-  show (While e b) = "while (" ++ show e ++ ") {" ++ show b ++ "}"
-  show (For e1 e2 e3 b) = concat ["for (", show e1,";", show e2, ";", show e3,
-                           ") {", show b, "}"]
-  show (Assign n e) = "var " ++ n ++ " = " ++ show e ++ ";"
+  show (If' e b) = concat ["if(", show e, "){", show b, "}"]
+  show (If e b1 b2) = concat [show (If' e b1), "else{", show b2, "}"]
+  show (While e b) = "while(" ++ show e ++ "){" ++ show b ++ "}"
+  show (For e1 e2 e3 b) = concat ["for(", show e1,";", show e2, ";", show e3,
+                           "){", show b, "}"]
+  show (Assign n e) = "var " ++ n ++ "=" ++ show e ++ ";"
   show Return' = "return;"
   show (Return e) = "return " ++ show e ++ ";"
   show Break = "break;"
@@ -84,16 +83,16 @@ class Render a where
 instance Render Block where
   render indent (Block stmts) = c $ map (r indent) stmts where
     c = concat
-    sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
+    sp n s = replicate (n * indentation) ' ' ++ s
     rec :: Int -> Block -> String
-    rec n (Block stmts) = c (map (r (n + 1)) stmts)
+    rec n (Block stmts) = "\n" ++ c (map (r (n + 1)) stmts)
     r :: Int -> Statement -> String
     r n (If' e b) = c [sp n "if (", render n e, ") {", rec n b, sp n "}"]
     r n (If e b1 b2) = c [r n (If' e b1), sp n "else {", rec n b2, sp n "}"]
     r n (While e b) = c [sp n "while (", render n e, ") {", rec n b, sp n "}"]
     r n (For e1 e2 e3 b) = c [sp n "for (", render n e1, ";", render n e2, ";",
                               render n e3, ") {", rec n b, sp n "}"]
-    r n (Assign v e) = c [sp n "var ", v, " = ", render n e, ";"]
+    r n (Assign v e) = c [sp n "var ", v, " = ", render n e, ";\n"]
     r n Return' = sp n "return;"
     r n (Return e) = sp n "return " ++ render n e ++ ";"
     r n Break = sp n "break;"
@@ -108,7 +107,7 @@ instance Render Term where
   render _ (Bool False) = "false"
   render n (Function ns blk) = c ["function (",
                                  intercalate ", " ns,
-                                 ") {", render (n+1) blk, sp n "}"]
+                                 ") {\n", render (n+1) blk, sp n "}"]
     where c = concat
           sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
 

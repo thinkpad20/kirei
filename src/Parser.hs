@@ -16,7 +16,7 @@ data Expr =
   | Let Name Expr (Maybe Expr)
   | Apply Expr Expr
   | Dotted Expr Expr
-  | Comma [Expr]
+  | Comma Expr Expr
   | Lambda [Name] Expr
   deriving (Show)
 
@@ -102,9 +102,9 @@ pLet = do
   fname <- pVariable
   args <- many pVariable
   keysim "="
-  expr <- pExpr
+  expr <- pExprs
   keysim ";"
-  next <- optionMaybe pExpr
+  next <- optionMaybe pExprs
   return $ Let fname (f args expr) next where
     f [] e = e
     f (a:as) e = Lambda [a] (f as e)
@@ -113,9 +113,9 @@ pExpr :: Parser Expr
 pExpr = choice [pIf, pLet, pApply]
 
 pExprs :: Parser Expr
-pExprs = Comma <$> pExpr `sepBy` (schar ',')
+pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 
-grab s = case parse (spaces *> pExpr
+grab s = case parse (spaces *> pExprs
                      <* many (keysim ";")
                      <* eof) "" s of
   Right val -> val

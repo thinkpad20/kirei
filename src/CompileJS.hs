@@ -46,7 +46,7 @@ eToBlk (Let v e e') = case e' of
   Nothing -> J.single $ J.Assign v $ eToE e
   Just e' -> eToBlk (Let v e Nothing) <> eToBlk e'
 eToBlk (Apply a b) = J.single $ J.Return $ J.Call (eToE a) [eToE b]
-eToBlk (Comma es) = J.Block $ map (eToE ~> J.Expr) es
+eToBlk (Comma e1 e2) = compile e1 <> eToBlk e2
 eToBlk e = J.single $ J.Return $ eToE e
 
 eToE :: Expr -> J.Expr
@@ -59,20 +59,25 @@ eToE (If c t f) = J.Ternary (eToE c) (eToE t) (eToE f)
 eToE (Lambda xs e) = J.Term $ J.Function xs $ eToBlk e
 eToE (Apply a b) = J.Call (eToE a) [eToE b]
 eToE (Dotted e1 e2) = J.Dot (eToE e1) (eToE e2)
-eToE (Let v e e') = error "Let statement in an expression"
-eToE (Comma es) = error "Comma in an expression"
+eToE l@(Let v e e') = error $ "Let statement in an expression: " ++ show l
+eToE e@(Comma _ _) = error $ "Comma in an expression: " ++ show e
 
--- Used for top-level statements only
+-- Used for blocks we don't want to end with a return
 compile :: Expr -> J.Block
 compile (If c t f) = J.single $ J.If (eToE c) (compile t) (compile f)
 compile (Let v e e') = case e' of
   Nothing -> J.single $ J.Assign v $ eToE e
   Just e' -> eToBlk (Let v e Nothing) <> compile e'
 compile (Apply a b) = J.single $ J.Expr $ J.Call (eToE a) [eToE b]
+compile (Comma l@(Let v e e') e2) = compile l <> compile e2
+compile (Comma e1 e2) = compile e1 <> compile e2
 compile e = J.single $ J.Expr $ eToE e
 
+toJs :: String -> J.Block
 toJs = grab ~> compile
 
+renderJS :: String -> String
 renderJS = toJs ~> J.render 0
 
+prettyPrintJS :: String -> IO ()
 prettyPrintJS = renderJS ~> putStrLn
