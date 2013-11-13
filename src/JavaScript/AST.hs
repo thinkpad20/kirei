@@ -29,6 +29,7 @@ data Term = Bool Bool
           | Number Double
           | Var Name
           | String String
+          | Array [Expr]
           | This
           | Function [Name] Block
           | Parens Expr
@@ -43,6 +44,8 @@ instance Show Term where
     where { c = concat; sep = intercalate "," }
   show (Bool True) = "true"
   show (Bool False) = "false"
+  show (Array exprs) = c ["[", sep $ map show exprs, "]"]
+    where { c = concat; sep = intercalate "," }
 
 instance Show Expr where
   show (Term term) = show term
@@ -110,6 +113,8 @@ instance Render Term where
                                  ") {\n", render (n+1) blk, sp n "}"]
     where c = concat
           sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
+  render n (Array exprs) = c ["[", sep $ map (render n) exprs, "]"]
+    where { c = concat; sep = intercalate "," }
 
 instance Render Expr where
   render n e = case e of

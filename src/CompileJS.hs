@@ -53,6 +53,7 @@ eToE :: Expr -> J.Expr
 eToE (Bool b) = J.Term $ J.Bool b
 eToE (Number n) = J.Term $ J.Number n
 eToE (String s) = J.Term $ J.String s
+eToE (Tuple es) = J.Term $ J.Array [eToE e | e <- es]
 eToE (Var v) = J.Term $ J.Var v
 eToE (Symbol s) = J.Term $ J.Var $ toString s
 eToE (If c t f) = J.Ternary (eToE c) (eToE t) (eToE f)

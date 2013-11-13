@@ -17,6 +17,7 @@ data Expr =
   | Apply Expr Expr
   | Dotted Expr Expr
   | Comma Expr Expr
+  | Tuple [Expr]
   | Lambda [Name] Expr
   deriving (Show)
 
@@ -58,7 +59,11 @@ pSymbol :: Parser String
 pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
 
 pParens :: Parser Expr
-pParens = between (schar '(') (schar ')') pExpr
+pParens = do
+  es <- between (schar '(') (schar ')') $ sepBy1 pExpr (schar ',')
+  case es of
+    [e] -> return e
+    es -> return $ Tuple es
 
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
