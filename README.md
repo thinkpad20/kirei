@@ -290,14 +290,10 @@ Yay! Note that when writing a `\` in GHCi you need to write it with two backslas
 A lot!
 
 * right now all functions are single-argument (we'll later change this for performance and ease of readability)
-* ~~we don't yet support infix symbols (everything is in a lisp-like prefix notation)~~ done!
 * no operator precedences, user-defined or otherwise. Use parentheses to disambiguate.
-* ~~functions must be declared as lambdas~~ fixed!
-* ~~We can't produce javascript files, just some basic code~~ done! Admittedly, it's not very advanced
-* ~~haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way~~ done!
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
-* ~~No pretty printing of the generated javascript code~~ done!
 * No arrays or any builtin data structures (linked lists and maps are especially important)
+  - We do have tuples now, woo hoo!
 * No type system yet (we plan to implement Hindley-Milner, or a modified version thereof)
 * No pattern matching yet
 * No TCO or any other optimizations
