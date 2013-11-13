@@ -196,9 +196,18 @@ The Kirei compiler is written in Haskell and requires a Haskell platform (google
 Then you can try writing a simple Kirei test script. Make sure you put it in the same folder as `std.js`, because otherwise it won't work (for now). There's already one of these in `first.kr`:
 
 ```
-let fact = \n => if n < 2 then 1 else n * (fact (n - 1));
+let fact n = if n < 2 then 1 else n * (fact (n - 1));
 
-console.log (fact 10);
+let fib n =
+  let f m acc prev =
+    if m < 1 then prev
+    else if m < 2 then acc
+    else f (m-1) (acc + prev) (acc);
+  f n 1 0;
+
+let f = std.writeln ("Factorial of 15: " + (fact 15)) (
+  std.writeln ("Fibonacci of 100: " + (fib 100)) $IO
+);
 ```
 
 You can compile and run this with:
@@ -207,14 +216,15 @@ You can compile and run this with:
 > bin/kirei lib/first.kr
 Wrote output to lib/first.js
 > node lib/first.js
-3628800
+Fibonacci of 100: 354224848179262000000
+Factorial of 15: 1307674368000
 ```
 
 You can see the JavaScript generated:
 ```
 > cat lib/first.js
 var std = require("./std");
-
+var $IO = 0;
 
 var fact = function (n) {
   if (std.lt(n)(2.0)) {
@@ -224,7 +234,27 @@ var fact = function (n) {
     return std.mult(n)(fact(std.sub(n)(1.0)));
   }
 };
-console.log(fact(10.0));
+var fib = function (n) {
+  var f = function (m) {
+    return function (acc) {
+      return function (prev) {
+        if (std.lt(m)(1.0)) {
+          return prev;
+        }
+        else {
+          if (std.lt(m)(2.0)) {
+            return acc;
+          }
+          else {
+            return f(std.sub(m)(1.0))(std.add(acc)(prev))(acc);
+          }
+        }
+      };
+    };
+  };
+  return f(n)(1.0)(0.0);
+};
+var f = std.writeln(std.add("Factorial of 15: ")(fact(15.0)))(std.writeln(std.add("Fibonacci of 100: ")(fib(100.0)))($IO));
 ```
 
 If you want to tinker in GHCi, a good place to start is with the `toJs` function, which parses one or more Kirei statements and converts them into a JavaScript `Block`. This has an instance of `Show`, so it can be printed as valid JavaScript. However, to pretty-print the output, use `prettyPrintJS` (or `renderJS` if you want the escape sequences).
