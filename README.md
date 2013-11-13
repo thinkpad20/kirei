@@ -29,9 +29,9 @@ getTyped()
 
 But while its syntax and outward behavior is similar, in truth the two are quite different, because under the surface the Haskell code is a single expression using a sophisticated system of monads, operators overloaded via type classes, and lambda functions. On the other hand, the Python is simply a series of instructions, which happen to be doing IO.
 
-Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but 
+Kirei moves to take many of the best parts from Haskell, such as its static typing, type classes, operators-as-functions, pattern matching, and more, but use a different approach to maintaining functional purity and IO. Kirei handles these things through *tokens*, a system by which an argument is passed which does nothing on its own but
 
-1. to signify that this function is authorized to perform the action requested, which helps us maintain funtional purity where desired, and 
+1. to signify that this function is authorized to perform the action requested, which helps us maintain funtional purity where desired, and
 2. to distinguish between functions which perform some actions which have effects, and the actual running of those functions, which lets us deal with impure functions gracefully.
 
 In Kirei, the code above might look something like this:
@@ -136,7 +136,7 @@ Now on the other hand, `foo` is fine. `fireMissiles a` is only a lambda expressi
 
 ### Quick syntax overview:
 
-Kirei's syntax is very simple and mostly defined by the lambda calculus. 
+Kirei's syntax is very simple and mostly defined by the lambda calculus.
 
 We start with simple constants or conditional expressions:
 
@@ -154,17 +154,17 @@ let b = a + 3;
 let c = if foobar == 0 then a else abs (max a b);
 ```
 
-Expressions can contain `let` statements internally:
+Note that expressions cannot contain `let` statements internally:
 
 ```
-let foo = let bar = 3; bar + 4;
+let foo = let bar = 3; bar + 4; # ERROR
 ```
 
 The `let` and `;` must match like opening and closing parentheses. This association lets us ignore whitespace entirely.
 
 Functions are another kind of expression, namely lambda expressions, and can be defined with the following syntax:
 
-* `\` 
+* `\`
 * one or more arguments (identifiers)
 * `=>`
 * the expression to be returned
@@ -183,20 +183,73 @@ And that's about it. Of course, future syntax will be introduced for comments, p
 
 ### Current status and usage
 
-Right now we really don't do very much. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is).
+Right now we really don't do very much. We have a tiny "standard library" with a few curried arithmetical and logical functions (+, -, <, or, etc). We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is). And of course, other functions can be written as well :).
 
-If you have a Haskell platform, you should be good to go. You can try it out like so:
+The Kirei compiler is written in Haskell and requires a Haskell platform (google that if you don't have it -- but I'm guessing you do). To set up Kirei, download the source and compile it as follows:
 
 ```
-> git clone <this repo's url>
-> cd kirei/src
+> git clone https://github.com/thinkpad20/kirei
+> cd kirei
+> ghc -o bin/kirei src/Kirei.hs src/Parser.hs src/CompileJS.hs src/JavaScript/AST.hs
+```
+
+Then you can try writing a simple Kirei test script. Make sure you put it in the same folder as `std.js`, because otherwise it won't work (for now). There's already one of these in `first.kr`:
+
+```
+let fact = \n => if n < 2 then 1 else n * (fact (n - 1));
+
+console.log (fact 10);
+```
+
+You can compile and run this with:
+
+```
+> bin/kirei lib/first.kr
+Wrote output to lib/first.js
+> node lib/first.js
+3628800
+```
+
+You can see the JavaScript generated:
+```
+> cat lib/first.js
+var std = require("./std");
+
+
+var fact = function (n) {
+  if (std.lt(n)(2.0)) {
+    return 1.0;
+  }
+  else {
+    return std.mult(n)(fact(std.sub(n)(1.0)));
+  }
+};
+console.log(fact(10.0));
+```
+
+If you want to tinker in GHCi, a good place to start is with the `toJs` function, which parses one or more Kirei statements and converts them into a JavaScript `Block`. This has an instance of `Show`, so it can be printed as valid JavaScript. However, to pretty-print the output, use `prettyPrintJS` (or `renderJS` if you want the escape sequences).
+
+```
+> cd src
 > ghci
 [... omitted ...]
 Prelude> :load CompileJS.hs
 [... omitted ...]
-*CompileJS> toJs "let fact = \\n => if n < 2 then 1 else n * (fact (n - 1));"
-[... omitted ...]
-var fact = function (n) {if (lt(n)(2.0)) {return 1.0;} else {return mult(n)(fact(sub(n)(1.0)));}};
+*CompileJS> let src = "let fact = \\n => if n < 2 then 1 else n * (fact (n - 1));"
+*CompileJS> toJs src
+var fact = function (n) {if (std.lt(n)(2.0)) {return 1.0;} else {return std.mult(n)(fact(std.sub(n)(1.0)));}};
+*CompileJS> renderJS src
+"\nvar fact = function (n) {\n  if (std.lt(n)(2.0)) {\n    return 1.0;\n  }\n  else {\n    return std.mult(n)(fact(std.sub(n)(1.0)));\n  }\n};"
+*CompileJS> prettyPrintJS src
+
+var fact = function (n) {
+  if (std.lt(n)(2.0)) {
+    return 1.0;
+  }
+  else {
+    return std.mult(n)(fact(std.sub(n)(1.0)));
+  }
+};
 *CompileJS>
 ```
 
@@ -209,16 +262,16 @@ A lot!
 * right now all functions are single-argument (we'll later change this for performance and ease of readability)
 * ~~we don't yet support infix symbols (everything is in a lisp-like prefix notation)~~ done!
 * no operator precedences, user-defined or otherwise. Use parentheses to disambiguate.
-* functions must be declared as lambdas (you can't write `let foo a = a + 1;`, you need to write `let foo = \a => a + 1;`) 
-* ~~We can't produce javascript files, just some basic code~~ done! But not very robust
+* ~~functions must be declared as lambdas~~ fixed!
+* ~~We can't produce javascript files, just some basic code~~ done! Admittedly, it's not very advanced
 * haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way
-* Standard library is non-existent (ALMOST non-existent. Basic arithmetic and logical functions are defined)
+* Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
 * ~~No pretty printing of the generated javascript code~~ done!
-* No arrays or any builtin data structures
-* No type system yet
+* No arrays or any builtin data structures (linked lists and maps are especially important)
+* No type system yet (we plan to implement Hindley-Milner, or a modified version thereof)
 * No pattern matching yet
 * No TCO or any other optimizations
 * Token system hasn't been implemented yet
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
 * We'd like to support anonymous recursion, so that we can write recursion into lambda functions without names
-* modules, namespaces, etc...
+* modules, namespaces, imports, etc...

@@ -1,3 +1,12 @@
-let fact = \n => if n < 2 then 1 else n * (fact (n - 1));
+let fact n = if n < 2 then 1 else n * (fact (n - 1));
 
-console.log (fact 10);
+let fib n =
+  let f m acc prev =
+    if m < 1 then prev
+    else if m < 2 then acc
+    else f (m-1) (acc + prev) (acc);
+  f n 1 0;
+
+let f = std.writeln ("Factorial of 15: " + (fact 15)) (
+  std.writeln ("Fibonacci of 100: " + (fib 100)) $IO
+);
