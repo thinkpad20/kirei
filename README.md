@@ -294,7 +294,7 @@ A lot!
 * no operator precedences, user-defined or otherwise. Use parentheses to disambiguate.
 * ~~functions must be declared as lambdas~~ fixed!
 * ~~We can't produce javascript files, just some basic code~~ done! Admittedly, it's not very advanced
-* haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way
+* ~~haven't yet figured out how we're going to support JavaScript objects and `.` notation in a functional way~~ done!
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
 * ~~No pretty printing of the generated javascript code~~ done!
 * No arrays or any builtin data structures (linked lists and maps are especially important)
