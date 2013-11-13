@@ -21,9 +21,17 @@ data Expr =
   | Lambda [Name] Expr
   deriving (Show)
 
+skip :: Parser ()
+skip = spaces *> (lineComment <|> spaces) where
+  lineComment = do
+    char '#'
+    many $ noneOf "\n"
+    char '\n'
+    return ()
+
 keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
-keySyms = ["->", "=>", ":", "|", "=", ";", "\\"]
-lexeme p = p <* spaces
+keySyms = ["->", "=>", ":", "|", "=", ";", "\\", "/*"]
+lexeme p = p <* skip
 schar = lexeme . char
 
 keyword k = lexeme . try $
