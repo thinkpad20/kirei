@@ -7,6 +7,5 @@ let fib n =
     else f (m-1) (acc + prev) (acc);
   f n 1 0;
 
-let f = std.writeln ("Factorial of 15: " + (fact 15)) (
-  std.writeln ("Fibonacci of 100: " + (fib 100)) $IO
-);
+std.writeln ("Factorial of 15: " + (fact 15)) $IO,
+std.writeln ("Fibonacci of 100: " + (fib 100)) $IO;
