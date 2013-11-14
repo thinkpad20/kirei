@@ -147,10 +147,10 @@ pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 
 grab :: String -> Expr
-grab s = case parse (spaces *> pExprs
+grab s = case parse (skip *> pExprs
                      <* many (keysim ";")
                      <* eof) "" s of
   Right val -> val
   Left err -> error $ show err
 
-test parser = parse (spaces *> parser <* eof) ""
+test parser = parse (skip *> parser <* eof) ""
