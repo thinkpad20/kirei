@@ -289,8 +289,7 @@ Yay! Note that when writing a `\` in GHCi you need to write it with two backslas
 
 A lot!
 
-* right now all functions are single-argument (we'll later change this for performance and ease of readability)
-* no operator precedences, user-defined or otherwise. Use parentheses to disambiguate.
+* no operator precedences, user-defined or otherwise. Use parentheses to disambiguate. This includes "operator whitespace."
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
 * No arrays or any builtin data structures (linked lists and maps are especially important)
   - We do have tuples now, woo hoo!
