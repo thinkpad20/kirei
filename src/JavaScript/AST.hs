@@ -90,11 +90,12 @@ instance Render Block where
     rec :: Int -> Block -> String
     rec n (Block stmts) = "\n" ++ c (map (r (n + 1)) stmts)
     r :: Int -> Statement -> String
-    r n (If' e b) = c [sp n "if (", render n e, ") {", rec n b, sp n "}"]
-    r n (If e b1 b2) = c [r n (If' e b1), sp n "else {", rec n b2, sp n "}"]
-    r n (While e b) = c [sp n "while (", render n e, ") {", rec n b, sp n "}"]
-    r n (For e1 e2 e3 b) = c [sp n "for (", render n e1, ";", render n e2, ";",
-                              render n e3, ") {", rec n b, sp n "}"]
+    r n (If' e b) = c [sp n "if (", render n e, ") {", rec n b, "\n", sp n "}"]
+    r n (If e b1 b2) = c [r n (If' e b1), "\n", sp n "else {", rec n b2, "\n", sp n "}"]
+    r n (While e b) = c [sp n "while (", render n e, ") {",
+                         rec n b, "\n", sp n "}"]
+    r n (For e1 e2 e3 b) = c [sp n "for (", render n e1, ";", render n e2,
+                              ";", render n e3, ") {", rec n b, "\n", sp n "}"]
     r n (Assign v e) = c [sp n "var ", v, " = ", render n e, ";\n"]
     r n Return' = sp n "return;"
     r n (Return e) = sp n "return " ++ render n e ++ ";"

@@ -10,6 +10,7 @@ import Control.Monad
 import Control.Applicative ((<$>))
 
 usage = "Usage: kirei <input filename(s)> [output filename]"
+preamble = "var std = require(\"./std\");\nvar $IO = 0;\n"
 
 main = do
   args <- getArgs

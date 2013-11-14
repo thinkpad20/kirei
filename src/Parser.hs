@@ -1,4 +1,4 @@
-module Parser (grab, Expr(..)) where
+module Parser {-(grab, test, Expr(..))-} where
 
 import Text.ParserCombinators.Parsec
 import Data.List
@@ -17,8 +17,9 @@ data Expr =
   | Apply Expr Expr
   | Dotted Expr Expr
   | Comma Expr Expr
+  | Case Expr [(Expr, Expr)]
   | Tuple [Expr]
-  | Lambda [Name] Expr
+  | Lambda Name Expr
   deriving (Show)
 
 skip :: Parser ()
@@ -29,8 +30,9 @@ skip = spaces *> (lineComment <|> spaces) where
     newline <|> (eof >> return ' ')
     return ()
 
-keywords = ["if", "then", "else", "True", "False", "let", "def", "sig"]
-keySyms = ["->", "=>", ":", "|", "=", ";", "\\", "/*"]
+keywords = ["if", "then", "else", "True", "False",
+            "let", "def", "sig", "case", "of"]
+keySyms = ["->", "=>", "|", "=", ";", "\\", "/*"]
 lexeme p = p <* skip
 schar = lexeme . char
 
@@ -38,7 +40,7 @@ keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
 keysim k = lexeme . try $
-  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&")
+  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&:")
 
 checkParse p = lexeme . try $ do
   s <- p
@@ -64,7 +66,7 @@ pVariable :: Parser String
 pVariable = checkParse $ many1 (letter <|> char '$')
 
 pSymbol :: Parser String
-pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$"
+pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$:"
 
 pParens :: Parser Expr
 pParens = do
@@ -73,6 +75,15 @@ pParens = do
     [e] -> return e
     es -> return $ Tuple es
 
+pCase :: Parser Expr
+pCase = Case <$ keyword "case" <*> pExpr
+             <* keyword "of"   <*> sepBy1 getAlt (schar '|') where
+  getAlt = do
+    pattern <- pExpr
+    keysim "->"
+    result <- pExpr
+    return (pattern, result)
+
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
                  Number <$> pDouble,
@@ -80,7 +91,8 @@ pTerm = choice [ Bool   <$> pBool,
                  Var    <$> pVariable,
                  Symbol <$> pSymbol,
                  pParens,
-                 pLambda]
+                 pLambda,
+                 pCase]
 
 pApply :: Parser Expr
 pApply = pDotted >>= \res -> parseRest res where
@@ -106,8 +118,14 @@ pIf = If <$ keyword "if"   <*> pExpr
          <* keyword "else" <*> pExpr
 
 pLambda :: Parser Expr
-pLambda = Lambda <$ keysim "\\" <*> many pVariable
-                 <* keysim "=>" <*> pExpr
+pLambda = do
+  keysim "\\"
+  vars <- many pVariable
+  keysim "->"
+  expr <- pExpr
+  return $ lambda vars expr where
+    lambda [] e = e
+    lambda (v:vs) e = Lambda v (lambda vs e)
 
 pLet :: Parser Expr
 pLet = do
@@ -120,7 +138,7 @@ pLet = do
   next <- optionMaybe pExprs
   return $ Let fname (f args expr) next where
     f [] e = e
-    f (a:as) e = Lambda [a] (f as e)
+    f (a:as) e = Lambda a (f as e)
 
 pExpr :: Parser Expr
 pExpr = choice [pIf, pLet, pApply]
@@ -128,6 +146,7 @@ pExpr = choice [pIf, pLet, pApply]
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 
+grab :: String -> Expr
 grab s = case parse (spaces *> pExprs
                      <* many (keysim ";")
                      <* eof) "" s of
