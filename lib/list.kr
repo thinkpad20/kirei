@@ -21,4 +21,14 @@ let map f list = case list of
 let render list =
   (single "[") ++ ((joinBy "," list) ++ (single "]"));
 
-(std.printList) (map (+1) [1, 2, 3, 6, 14, 30]);
+let tildegt f g = \x -> g (f x);
+let bang x f = f x;
+
+let fromRange stop start =
+  let step = if stop > start then \a -> a-1 else (+1);
+  let stopTest = if stop > start then <= else >=;
+  let loop a b acc = if stopTest a b then acc
+    else loop (step a) b (Cons a acc);
+  (loop stop start Empty) ! reverse;
+
+(std.printList) (map (*7) (fromRange 1 30));

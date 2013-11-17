@@ -57,7 +57,7 @@ keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
 keysim k = lexeme . try $
-  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&:")
+  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&:.")
 
 checkParse p = lexeme . try $ do
   s <- p
@@ -72,7 +72,7 @@ pDouble :: Parser Double
 pDouble = lexeme $ do
   ds <- many1 digit
   option (read ds) $ do
-    char '.'
+    keysim "."
     ds' <- many1 digit
     return $ read (ds ++ "." ++ ds')
 
@@ -92,7 +92,7 @@ pList :: Parser Expr
 pList = List <$> between (schar '[') (schar ']') get where
   get = try (do
     start <- pExpr
-    lexeme $ string ".."
+    keysim ".."
     stop <- pExpr
     return $ ListRange start stop)
     <|> ListLiteral <$> (sepBy pExpr (schar ','))
@@ -150,7 +150,7 @@ pApply = pDotted >>= \res -> parseRest res where
 pDotted :: Parser Expr
 pDotted = pTerm >>= \res -> parseRest res where
   parseRest res = do
-    schar '.'
+    keysim "."
     y <- pExpr
     parseRest (Dotted res y)
     <|> return res
