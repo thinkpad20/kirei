@@ -8,6 +8,7 @@ import Control.Monad.Identity
 import Data.Monoid
 import Control.Applicative
 import Debug.Trace
+import Data.Char
 
 (~>) = flip (.)
 infixr 9 ~>
@@ -24,289 +25,236 @@ renderJS = toJs ~> J.render 0
 prettyPrintJS :: String -> IO ()
 prettyPrintJS = renderJS ~> putStrLn
 
--- Unraveling pattern matching...
--- This should be able to express all of the patterns we support
---data Pattern =
---  BoolConst Bool
---  | StrConst String
---  | NumConst Double
---  | VarPattern String
---  | TuplePattern [Pattern]
---  | Constructor String [Pattern]
---  deriving (Show)
-
----- Now we need to convert an Expr into a Pattern
---eToPattern :: Expr -> Pattern
---eToPattern expr = case expr of
---  Bool b -> BoolConst b
---  Number n -> NumConst n
---  String s -> StrConst s
---  Var v -> VarPattern v
---  Symbol s -> VarPattern s
---  Tuple exprs -> TuplePattern (eToPattern <$> exprs)
---  Apply (Var v) e -> Constructor v [eToPattern e]
---  Apply (Symbol s) e -> Constructor s [eToPattern e]
---  Apply a b -> case eToPattern a of
---    Constructor s exs -> Constructor s (exs ++ [eToPattern b])
---    _ -> error $ "wtf: " ++ show (eToPattern a)
---  e -> error $ "Invalid pattern: " ++ show e
-
---testPat = grab ~> eToPattern
-
-{-
-
-# when matching against a variable, we need arrays
-let foo y =
-  let x = bar y;
-  case x of
-    (b, "hello", 2) -> "oh noes"
-  | (a, b, c) -> "sweet";
-
-var foo = function (y) {
-  var x = bar(y);
-  if (x[1] === "hello" && x[2] === 2) {
-    return "oh noes";
-  }
-  else {
-    return "sweet";
-  }
-};
-
-# when matching with arguments we need named arguments
-let baz x = case x of
-  (1, 2, 3) -> 4
-| (a, b, c) -> a + b - c;
-
-# this is the same case as
-let baz (1, 2, 3) = 4
-|   baz (a, b, c) = a + b - c;
-
-# and the same case as
-let baz (a, b, c) = case (a, b, c) of
-  (1, 2, 3) -> 4
-| else -> a + b - c;
-
-# and all should compile to
-var baz = function(_arg0, _arg1, _arg2) {
-  if (_arg0 === 1 && _arg1 === 2 && _arg2 === 3) {
-    return 4;
-  }
-  else {
-    var a = _arg0;
-    var b = _arg1;
-    var c = _arg2;
-    return a + b - c;
-  }
-};
-
-Essentially we have two cases: one, when the tuple in the case statement is
-actually the arguments to the function, in which case, we use those arguments
-in our boolean expression. In the second case, the tuple is the result of a
-function call, or some local variable.
-
-Within the first case, there are two sub-possibilities: that we were provided
-argument names, and that the tuple was declared with a variable.
-
-Let's assume for now that we can distinguish the two easily at compile time.
-Most of the functionality is going to be the same, so let's say that we
-can pass in a "TupleMode", described below, to distinguish the case we're in
-
-There is a third, weirder case, when the tuple is simply created "on the fly",
-in which case it might refer to anything:
-
-let foo (a, b) c =
-  let bar = someFunctionCall;
-  case (b, bar, c) of
-    (1, 2, 3) -> 4
-  | (x, y, z) -> 7 * x - y * z;
-
-Or try this on:
-
-let foo (a, b, c) =
-  let bar = (5*b, c*7);
-  case bar of
-    (5, 6) -> 3
-  | (b, c) -> b + c;
-
-In this instance, it's a local variable, but it shows that things can get
-kinda weird and soon really not clear. We'll probably need to be aware of
-types and context to really be robust in this.
--}
-
 testBAS name = grab ~> boolAndAssigns name
 
 single e = J.Block [e]
 
---mkMatch :: TupleMode -> [(Expr, Expr)] -> J.Block
---mkMatch _ [] = J.Block []
---mkMatch mode ((e, e'):es) = let
 {-
-let foo x = case x of () -> 1 | (a, b) -> a + b;
-var foo = function () {
-  if (arguments.length == 0) {
-    return 1;
-  }
-  else if (arguments[0] ==)
-}
+let reverse l =
+  case l of
+    Empty -> []
+  | (1 :: bs) -> [2]
+  | (2 :: 3 :: _) -> [5,6,7]
+  | (a :: as) -> (reverse as) ++ a;
 
-Ok sweet looks like javascript makes this easy for us. We can always use the
-arguments array in a match statement, regardless of what the declared variable
-names are! Yay. Of course, local vs argument is still an important question,
-because it changes the variable name we're pulling from... but that just means
-we can pass in `arguments` as the name of the variable (and it becomes a local
-variable)!
+Var "Empty"
+Apply
+  Apply
+    Symbol "::"
+    Number 1
+  Var "bs"
 
-OK so let's say that we have
+Apply
+  Apply
+    Apply
+      Apply
+        Symbol "::" <- l[0]
+        Number 2 <- l[1]
+      Number 3 <- l[2]
+    Symbol "::"
+  Underscore
 
-(a, b, 1)
+e0 = Apply (Symbol "::")
+e1 = Apply (Symbol "::") (Number 2)
+e2 = Apply
 
-and the argname is arguments.
+start with l
+Apply
+  Apply <- l
+    Symbol "::" <- l[0]
+    Number 2.0 <- l[1]
+  Apply <- l[2]
+    Apply
+      Symbol "::" <- l[2][0]
+      Number 3.0 <- l[2][1]
+    Var "Empty" <- l[2][2]
 
-then we should call
-[boolAndAssigns arguments[0] a,
- boolAndAssigns arguments[1] b,
- boolAndAssigns arguments[2] 1]
-so if we had
-[(0, a), (1, b), (2, 1)]
+# start with l
+Apply
+  Apply
+    Symbol "::" <- l[0] # argh
+    Number 2.0 <- l[1]
+  Apply # right side gets l[2]
+    Apply # see an apply
+      Symbol "::" <- l[2][0]
+      Number 3.0 <- l[2][1]
+    Apply
+      Apply
+        Symbol "::" <- l[2][2][0]
+        Number 4.0 <- l[2][2][1]
+      Var "Empty" <- l[2][2][2]
 
-we'd get back
-[arguments]
+OK even worse, what if we have a datatype that takes more than 2 args?
+datatype Foo = Bar | Foo Int Int Foo;
+let f = Foo 1 2 (Foo 3 4 Bar)
+JS representation:
+["Foo", 1, 2, ["Foo", 3, 4, ["Bar"]]]
+AST for this:
+Apply <- depth of "applys" tells us how many elements are in the constructor!
+  Apply
+    Apply <- 3 "Apply"s, so we know Foo has 3 elements
+      Var "Foo" <- f[0] <- this is f[0] always, we're good
+      Number 1.0 <- f[1]
+    Number 2.0 <- f[2] <- we know this is f[2] because... of the previous call
+  Apply <- when we see an Apply as a SECOND argument, we're entering another constructor
+           If we're entering another constructor, that's when we have to
+           make a new base variable, in this case f[3], since the previous
+           pattern returned with 2 as its highest argument
+    Apply <- which will have k arguments... can we use this info? maybe it's
+             interesting but not necessary to code into the algorithm...
+      Apply
+        Var "Foo" <- f[3][0] <- we hit that constructor and we do the same pattern...
+        Number 3.0 <- f[3][1]
+      Number 4.0 <- f[3][2]
+    Var "Bar" <- f[3][3][0]
 
+And EVEN worse, what about something that can recurse at multiple levels?
+datatype Qux = End | Qux Qux Qux Int;
+let qux = Qux (Qux End End 3) (Qux (Qux End End 5) End 6) 7;
+["Qux",
+  ["Qux",
+    ["End"],
+    ["End"],
+    3],
+  ["Qux",
+    ["Qux",
+      ["End"],
+      ["End"],
+      5],
+    ["End"],
+    6],
+  7]
+]
+
+What we can see from here:
+- the first argument in every Apply is either:
+  - a constructor, or
+  - another Apply.
+
+So what does that tell us? In the first case, we
+want to look at the 0th element of whatever the
+relevant array is:
+
+  Apply (Var v) e -> let
+    constructorCheck = eq (aRef 0) (J.String v)
+    (bool, assigns) = boolsAndAssigns (aRef 1) e
+    in (constructorCheck `andStep` bool, assigns)
+
+compile with _a, 0
+Apply
+  Var "Foo"
+  Number 1
+-> (_a[0] === "Foo" && _a[1] === 1, 1)
+
+  (Apply
+    (Apply
+      (Apply
+        (Var "Foo") <- f[3][0] -> ([_a[3][0] === "Foo"], [], 0)
+        (Var "b")) <- f[3][1] -> ([], [Assign "b" _a[3][1]], 1)
+      (Var "c")) <- f[3][2] -> ([_a[3][0] === "Foo"], [Assign "b" _a[3][1], Assign "c" f[3][2]], 2)
+    (Var "Bar")) <- f[3][3][0] -> ([_a[3][0] === "Foo", _a[3][3][0] === "Bar"], [Assign "b" _a[3][1], Assign "c" f[3][2]], 2)
+
+Apply
+  (Apply
+    (Apply
+      (Var "Foo") <- f[0]
+      (Number 1.0) <- f[1]
+    (Number 3.0) <- f[2]
+  (Apply
+    (Apply
+      (Apply
+        (Var "Foo") <- f[3][0]
+        (Var "b")) <- f[3][1]
+      (Var "c")) <- f[3][2]
+    (Var "Bar")) <- f[3][3][0]
+
+Apply
+  (Apply
+    (Apply
+      (Var "Qux") <- l[0]
+      (Apply <- second argument is an apply, so we need to "go deeper"
+                meaning l -> l[1] (we just finished the 0th index)
+        (Apply <- first arg is an Apply -> recurse down l[1]
+          (Apply <- first arg is a Var -> compile that with l[1], get ([l[1][0]==="Qux"], [], 0)
+                    second arg is a Var, constructor -> compile with l[1], get ([l[1][1][0]] === "End", [], 1)
+                    finally return ()
+            (Var "Qux") <- l[1][0] -> ([l[1][0]==="Qux"], [], 0)
+            (Var "End")) <- l[1][1][0] -> ([l[1][1][0]] === "End", [], 1)
+          (Var "End")) <- l[1][2][0]
+        (Number 3.0))) <- l[1][3]
+    (Apply
+      (Apply
+        (Apply
+          (Var "Qux") <- l[2][0]
+          (Apply
+            (Apply
+              (Apply
+                (Var "Qux") <- l[2][]
+                (Var "End"))
+              (Var "End"))
+            (Number 5.0)))
+        (Var "End"))
+      (Number 6.0)))
+    (Number 7.0)
 -}
 
 boolAndAssigns :: J.Expr -> Expr -> (Maybe J.Expr, J.Block)
-boolAndAssigns argName expr = case expr of
-  Bool b -> (eq' J.Bool b, mempty)
-  Number n ->(eq' J.Number n, mempty)
-  String s -> (eq' J.String s, mempty)
-  Var v -> case argName of
-    J.Var v' | v' == v -> (Nothing, mempty)
-    _ -> (Nothing, single $ J.Assign (J.Var v) argName)
-  Tuple exprs -> (bool, assigns) where
-    -- take an index i and make an expression argName[i]
-    newArgName i = J.ArrayReference argName (J.Number i)
-    -- will compile a match with argName[i] as the argName
-    convertWithIndex (i, e) = boolAndAssigns (newArgName i) e
-    -- does pair conversion and converts each
-    list = convertWithIndex <$> zip [0..] exprs
-    andStep (Just e1) (Just e2) = Just $ J.Binary "&&" e1 e2
-    andStep a b = a `mplus` b
-    -- make an AND of all the a==b expressions in subcompilations
-    bool = foldr andStep Nothing (fst <$> list)
-    -- concatenate all of the assignments from the subcompilations
-    assigns = mconcat (snd <$> list)
-  where eq e1 e2 = Just $ J.Binary "===" e1 e2
-        eq' f a = eq argName (f a)
+boolAndAssigns argName expr = (bools, assignments) where
+  (bools, assignments, _) = ba 0 argName expr
+  ba :: Int -> J.Expr -> Expr -> (Maybe J.Expr, J.Block, Int)
+  ba k argName expr = case expr of
+    Bool b -> (eq' J.Bool b, mempty, k)
+    Number n ->(eq' J.Number n, mempty, k)
+    String s -> (eq' J.String s, mempty, k)
+    Var v -> if isConstructor v then (eq (aRef 0) (J.String v), mempty, 1)
+      else case argName of
+        J.Var v' | v' == v -> (Nothing, mempty, k)
+        _ -> (Nothing, single $ J.Assign (J.Var v) argName, k)
+    Symbol s -> (eq (aRef 0) (J.String s), mempty, 1)
+    Tuple exprs -> (mkBool list, mkAssigns list, k) where
+      -- take an index i and make an expression argName[i]
+      newArgName i = J.ArrayReference argName (J.Number i)
+      -- will compile a match with argName[i] as the argName
+      convertWithIndex (i, e) = ba k (newArgName i) e
+      -- does pair conversion and converts each
+      list = convertWithIndex <$> zip [0..] exprs
+    Apply a b -> let
+      (b1, a1, i) = ba k argName a
+      (b2, a2, j) = ba i (aRef $ fromIntegral i) b
+      in (b1 `and` b2, a1 <> a2, j+1)
+    where eq e1 e2 = Just $ J.Binary "===" e1 e2
+          eq' f a = eq argName $ f a
+          aRef n = J.ArrayReference argName (J.Number n)
+          isConstructor (c:_) = isUpper c
+          (Just e1) `and` (Just e2) = Just $ J.Binary "&&" e1 e2
+          a `and` b = a `mplus` b
+          -- make an AND of all the a==b expressions in subcompilations
+          fst (a, b, c) = a
+          snd (a, b, c) = b
+          mkBool list = foldr and Nothing (fst <$> list)
+          -- concatenate all of the assignments from the subcompilations
+          mkAssigns list = mconcat (snd <$> list)
 
--- OK let's go the next level up, something that takes a pair
--- of expressions and turns it into an if statement.
-compileMatch :: J.Expr -> (Expr, Expr) -> J.Statement
-compileMatch var (pat, res) = case boolAndAssigns var pat of
-  -- if there's no filtering to be done, we can just return the variable
-  (Nothing, J.Block []) -> J.Expr var
-  (Just bool, assigns) -> J.If' bool (assigns <> eToBlk res)
-
-{-
-let foo x y = case (x * y, someOtherVar) of
-  (3, 4) -> 5
-| (a, b) -> a ^ b;
--}
-
-{-
-case foo of
-  bar -> baz;
-
-var bar = foo;
-return baz;
-
-case foo of
-  1 -> bar;
-
-if (foo == 1) {
-  return bar;
-}
-
-
--}
-
--- alright sweet so the next step up is to take a list of expression pairs
--- and produce a series of 0 or more if statements. A tricky thing here
--- is that we need to be able to handle ifs and elses correctly.
 compileCase :: Int -> Expr -> Matches -> J.Block
 compileCase tempNum expr matches = case expr of
-  (Var name) -> go (J.Var name) matches
-  _ -> single (J.Assign mkVName (eToE expr)) <> go mkVName matches
+  (Var name) -> matchesToBlock (J.Var name) matches
+  _ -> single (J.Assign mkVName (eToE expr)) <> matchesToBlock mkVName matches
   where mkVName = J.Var $ "__temp" ++ show tempNum
-        go :: J.Expr -> Matches -> J.Block
-        go v matches = case matches of
-          [] -> error "Empty case statement with no matches"
-          (pat, res):ms -> case boolAndAssigns v pat of
-            (Nothing, J.Block []) -> eToBlk res
-            (Nothing, assignments) -> assignments <> eToBlk res
-            (Just cond, assignments) -> single $
-              J.If cond (assignments <> eToBlk res) $ case ms of
-                [] -> single $ J.throwNewError "Pattern match failed"
-                _ -> go v ms
-
-{-
-let foo = case bar of 1 -> 2 | _ -> 3;
-
-var foo=function(__arg0){if(__arg0===1){return 2;}else{return 3;}}(bar);
-
-let foo = case bar * 3 of 1 -> 2 | _ -> 3;
-
-var foo=function(__arg0){if(__arg0===1){return 2;}else{return 3;}}(bar*3);
-
--}
 
 compileCaseToExpr :: Expr -> Matches -> J.Expr
-compileCaseToExpr expr matches = callGo (eToE expr)
-  where nm = "_a"
-        callGo e = J.Call (J.Function [nm] $ go (J.Var nm) matches) [e]
-        go :: J.Expr -> Matches -> J.Block
-        go v matches = case matches of
-          [] -> error "Empty case statement with no matches"
-          (pat, res):ms -> case boolAndAssigns v pat of
-            (Nothing, J.Block []) -> eToBlk res
-            (Nothing, assignments) -> assignments <> eToBlk res
-            (Just cond, assignments) -> single $
-              J.If cond (assignments <> eToBlk res) $ case ms of
-                [] -> single $ J.throwNewError "Pattern match failed"
-                _ -> go v ms
+compileCaseToExpr expr matches =
+  J.Call (J.Function ["_a"] $ matchesToBlock (J.Var "_a") matches) [eToE expr]
 
-compileCase' :: String -> J.Block
-compileCase' input = case grab input of
-  Case expr matches -> compileCase 0 expr matches
-  otherwise -> error $ "That's not a case, it's a " ++ show (grab input)
-
--- Alright so now we want to compile a case statement... We need
--- as input the name of the variable to match against. If the case
--- is matching against a function call, then we need to store the
--- result in another variable
-
-
--- OK what we actually want to do is take an (Expr, Expr) pair and
--- produce a JS if-statement.
---makeMatch :: String -> (Expr, Expr) -> J.Statement
---makeMatch argName (pattern, result) = J.If bool block where
---  eq e1 e2 = Just $ J.Binary "===" e1 e2
---  eq' f a = eq (J.Var argName) (f a)
---  _and = J.Binary "&&"
---  boolAndAssigns :: Name -> Expr -> (J.Bool, [J.Statement])
---  boolAndAssigns arg pat = case pat of
---    Bool b -> (eq' J.Bool b, [])
---    Number n ->(eq' J.Number n, [])
---    String s -> (eq' J.String s, [])
---    Var v -> (Nothing, [J.Assign v (J.Var arg)])
---    Tuple es -> let ba = boolAndAssigns <$> es
---    -- gotta go, but at a high level with tuples and constructors
---    -- we want to recurse down, if the pattern we recursed to is
---    -- nothing then we don't do anything with it, otherwise && all
---    -- of the patterns that we got together into a big boolean
---    _ -> error $ "Invalid pattern match " ++ show pattern
---  (bool, assignments) = boolAndAssigns argName
---  block = toBlock blkInfo
---  toBlock = undefined
+matchesToBlock :: J.Expr -> Matches -> J.Block
+matchesToBlock v matches = case matches of
+  [] -> error "Empty case statement with no matches"
+  (pat, res):ms -> case boolAndAssigns v pat of
+    (Nothing, J.Block []) -> eToBlk res
+    (Nothing, assignments) -> assignments <> eToBlk res
+    (Just cond, assignments) -> single $
+      J.If cond (assignments <> eToBlk res) $ case ms of
+        [] -> single $ J.throwNewError "Pattern match failed"
+        _ -> matchesToBlock v ms
 
 -- Compilation
 -- eToBlk compiles an expression to a block; this means that it will always
