@@ -98,13 +98,13 @@ Now, we can see that `printFuncs` contains functions -- things waiting to be com
 
 The `$IO` thingamajig is the top-level IO token: accessible only by module-scope functions (a.k.a. those declared outside of the scope of any subfunction), it's a global constant which allows module-scope functions to pass tokens to their subfunctions. More on this later. Anyway, this list comprehension means "take each element `p` from the list `printFuncs` and put the result of calling `p` with the argument `$IO` into a new list". We could also write this as
 
-```
+```haskell
 map ($IO !) printFuncs;
 ```
 
 With the definition:
 
-```
+```haskell
 sig (!) : a -> (a -> b) -> b;
 let a ! f = f a;
 ```
@@ -177,6 +177,22 @@ let fact1 = \n -> if n < 2 then 1 else n * (fact1 (decr n));
 let fact2 = \n ->
   let factR = \n acc -> if n < 2 then acc else factR (n - 1) (acc * n);
   factR n;
+```
+
+Single-line comments start with `#`; there are no block comments yet.
+
+```
+#here's a comment
+here is some code;
+```
+
+Pattern matching works via Haskell-style case expressions:
+
+```haskell
+let fib n = case n of 
+  0 -> 0 
+| 1 -> 1 
+| n -> (fib (n-1)) + (fib (n-2));
 ```
 
 And that's about it. Of course, future syntax will be introduced for comments, pattern matching, type signatures, type and class declarations, data structure literals, etc.
