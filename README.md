@@ -36,7 +36,7 @@ Kirei moves to take many of the best parts from Haskell, such as its static typi
 
 In Kirei, the code above might look something like this:
 
-```
+```haskell
 let getTyped io =
   println "Write something:" io,
   let s = getLine io;
@@ -65,7 +65,7 @@ Consider a basic factorial function. All we need to know to compute a factorial 
 
 On the other hand, what about a "void function", like `print`? Well, theoretically, `print "Hello, world!"` gives us all of the information we need to compute it (we just need to know what it is we want to print). What would this mean if we had a data structure full of print functions?
 
-```
+```haskell
 printFuncs = [print "hello", print "world!"]
 ```
 
@@ -79,32 +79,32 @@ But not only is this syntactically invalid, it doesn't type match! The type of `
 
 Kirei addresses this through its token system. We give `print` the following treatment:
 
-```
+```haskell
 sig print : String -> IO -> ();
 ```
 
 This is a signature in Kirei, meaning that `print` takes an `IO` token and a string, and returns a `()`. Now what we can do is this:
 
-```
+```haskell
 sig printFuncs : [IO -> ()];
 let printFuncs = [print "hello", print "world!"];
 ```
 
 Now, we can see that `printFuncs` contains functions -- things waiting to be computed -- not values. So if we want to print all of these guys, we need to pass in an IO token! How can we do that?
 
-```
+```haskell
 [p $IO | p <- printFuncs];
 ```
 
 The `$IO` thingamajig is the top-level IO token: accessible only by module-scope functions (a.k.a. those declared outside of the scope of any subfunction), it's a global constant which allows module-scope functions to pass tokens to their subfunctions. More on this later. Anyway, this list comprehension means "take each element `p` from the list `printFuncs` and put the result of calling `p` with the argument `$IO` into a new list". We could also write this as
 
-```
+```haskell
 map ($IO !) printFuncs;
 ```
 
 With the definition:
 
-```
+```haskell
 sig (!) : a -> (a -> b) -> b;
 let a ! f = f a;
 ```
@@ -166,20 +166,36 @@ Functions are another kind of expression, namely lambda expressions, and can be 
 
 * `\`
 * one or more arguments (identifiers)
-* `=>`
+* `->`
 * the expression to be returned
 
 So, for example:
 
-```
-let decr = \a => a - 1;
-let fact1 = \n => if n < 2 then 1 else n * (fact1 (decr n));
-let fact2 = \n =>
-  let factR = \n acc => if n < 2 then acc else factR (n - 1) (acc * n);
+```haskell
+let decr = \a -> a - 1;
+let fact1 = \n -> if n < 2 then 1 else n * (fact1 (decr n));
+let fact2 = \n ->
+  let factR = \n acc -> if n < 2 then acc else factR (n - 1) (acc * n);
   factR n;
 ```
 
-And that's about it. Of course, future syntax will be introduced for comments, pattern matching, type signatures, type and class declarations, data structure literals, etc.
+Single-line comments start with `#`; there are no block comments yet.
+
+```
+#here's a comment
+here is some code;
+```
+
+Pattern matching works via Haskell-style case expressions:
+
+```haskell
+let fib n = case n of 
+  0 -> 0 
+| 1 -> 1 
+| n -> (fib (n-1)) + (fib (n-2));
+```
+
+And that's about it. Of course, future syntax will be introduced for type signatures, type and class declarations, data structure literals, etc.
 
 ### Current status and usage
 
@@ -195,7 +211,7 @@ The Kirei compiler is written in Haskell and requires a Haskell platform (google
 
 Then you can try writing a simple Kirei test script. Make sure you put it in the same folder as `std.js`, because otherwise it won't work (for now). There's already one of these in `first.kr`:
 
-```
+```haskell
 let fact n = if n < 2 then 1 else n * (fact (n - 1));
 
 let fib n =
@@ -205,9 +221,8 @@ let fib n =
     else f (m-1) (acc + prev) (acc);
   f n 1 0;
 
-let f = std.writeln ("Factorial of 15: " + (fact 15)) (
-  std.writeln ("Fibonacci of 100: " + (fib 100)) $IO
-);
+std.writeln ("Factorial of 15: " + (fact 15)) $IO;
+std.writeln ("Fibonacci of 100: " + (fib 100)) $IO;
 ```
 
 You can compile and run this with:
@@ -221,8 +236,8 @@ Factorial of 15: 1307674368000
 ```
 
 You can see the JavaScript generated:
-```
-> cat lib/first.js
+
+```javascript
 var std = require("./std");
 var $IO = 0;
 
