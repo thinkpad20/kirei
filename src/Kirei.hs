@@ -10,12 +10,20 @@ import Control.Monad
 import Control.Applicative ((<$>))
 
 usage = "Usage: kirei <input filename(s)> [output filename]"
-preamble = "var std = require(\"./std\");\nvar $IO = 0;\n"
+preamble = reqStd ++ imprts ++ "\n" where
+  reqStd = "var std = require(\"./std\");\n"
+  imprts = concatMap require stdObjs
+  stdObjs = ["$IO", "Cons", "Empty", "add", "sub", "mult",
+             "div", "lt", "gt", "leq", "geq", "eq", "neq",
+             "and", "or", "neg", "mkList", "mkListRange"]
+  require o = concat ["var ", o, " = std.", o, ";\n"]
+
+
 
 compileAndWrite :: String -> IO ()
 compileAndWrite fname = do
   src <- readFile fname
-  writeFile (getName fname) (preamble ++ renderJS src)
+  writeFile (getName fname) (preamble ++ renderJS src ++ "\n")
   putStrLn $ "Wrote output to " ++ getName fname
   where
     getName = splitOn "." ~> init ~> intercalate "." ~> (++ ".js")

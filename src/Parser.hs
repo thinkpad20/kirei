@@ -7,8 +7,6 @@ import Control.Applicative hiding ((<|>), many, optional)
 type Name = String
 type Matches = [(Expr, Expr)]
 
---Maybe a -> NameWithParams "Maybe" [BoundName "a"]
-
 data TypeName = TypeName Name [TypeName]
 
 instance Show TypeName where
@@ -32,7 +30,13 @@ data Expr =
   | Case Expr Matches
   | Tuple [Expr]
   | Lambda Name Expr
+  | List ListLiteral
   | Datatype Name [Constructor] (Maybe Expr)
+  deriving (Show)
+
+data ListLiteral =
+  ListLiteral [Expr]
+  | ListRange Expr Expr
   deriving (Show)
 
 skip :: Parser ()
@@ -84,6 +88,15 @@ pVariable = checkParse $ do
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$:"
 
+pList :: Parser Expr
+pList = List <$> between (schar '[') (schar ']') get where
+  get = try (do
+    start <- pExpr
+    lexeme $ string ".."
+    stop <- pExpr
+    return $ ListRange start stop)
+    <|> ListLiteral <$> (sepBy pExpr (schar ','))
+
 pParens :: Parser Expr
 pParens = do
   es <- between (schar '(') (schar ')') $ sepBy1 pExpr (schar ',')
@@ -121,7 +134,8 @@ pTerm = choice [ Bool   <$> pBool,
                  Symbol <$> pSymbol,
                  pParens,
                  pLambda,
-                 pCase]
+                 pCase,
+                 pList]
 
 pApply :: Parser Expr
 pApply = pDotted >>= \res -> parseRest res where

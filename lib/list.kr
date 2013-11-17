@@ -1,8 +1,3 @@
-datatype List =
-  Empty
-| Cons a (List)
-;
-
 let reverse list =
   let rev l acc = case l of
     Empty -> acc
@@ -19,3 +14,11 @@ let joinBy sep listOfLists = case listOfLists of
 
 let single a = Cons a Empty;
 
+let map f list = case list of
+  Empty -> Empty
+| Cons a lst -> Cons (f a) (map f lst);
+
+let render list =
+  (single "[") ++ ((joinBy "," list) ++ (single "]"));
+
+(std.printList) (map (+1) [1, 2, 3, 6, 14, 30]);

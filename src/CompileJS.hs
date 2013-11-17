@@ -25,6 +25,7 @@ renderJS = toJs ~> J.render 0
 
 prettyPrintJS :: String -> IO ()
 prettyPrintJS = renderJS ~> putStrLn
+ppJS = prettyPrintJS
 
 testBAS name = grab ~> boolAndAssigns name
 
@@ -88,15 +89,6 @@ matchesToBlock v matches = case matches of
         [] -> single $ J.throwNewError "Pattern match failed"
         _ -> matchesToBlock v ms
 
-{-
-datatype Foo =
-  Fuzz | Fizz a b Fozz;
-
-var Fuzz = ["Fuzz"]
-var Fizz = function (a, b, fozz) {
-  return ["Fizz", a, b, fozz];
-};
--}
 
 makeConstructors :: Name -> [Constructor] -> J.Block
 makeConstructors name cs = mconcat (construct ~> single <$> cs) where
@@ -149,6 +141,9 @@ eToE expr = case expr of
   Apply a b -> J.Call (eToE a) [eToE b]
   Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
   Case expr matches -> compileCaseToExpr expr matches
+  List (ListLiteral list) -> J.Call (J.Var "mkList") (eToE <$> list)
+  List (ListRange start stop) ->
+    J.Call (J.Var "mkListRange") $ eToE <$> [start, stop]
   l@(Let v e e') -> error $ "Let statement in an expression: " ++ show l
   e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
 
@@ -179,18 +174,19 @@ runTest = do
 -- Utility functions
 
 toString :: String -> String
-toString ">" = "std.gt"
-toString "<" = "std.lt"
-toString "=" = "std.eq"
-toString ">=" = "std.geq"
-toString "<=" = "std.leq"
-toString "~" = "std.neg"
-toString "+" = "std.add"
-toString "-" = "std.sub"
-toString "*" = "std.mult"
-toString "/" = "std.div"
-toString "&&" = "std.and"
-toString "||" = "std.or"
+toString ">" = "gt"
+toString "<" = "lt"
+toString "=" = "eq"
+toString ">=" = "geq"
+toString "<=" = "leq"
+toString "~" = "neg"
+toString "+" = "add"
+toString "-" = "sub"
+toString "*" = "mult"
+toString "/" = "div"
+toString "&&" = "and"
+toString "||" = "or"
+toString "^" = "pow"
 toString s = (map fromChar ~> concat) s where
   fromChar '>' = "gt"
   fromChar '<' = "lt"
