@@ -189,9 +189,9 @@ here is some code;
 Pattern matching works via Haskell-style case expressions:
 
 ```haskell
-let fib n = case n of 
-  0 -> 0 
-| 1 -> 1 
+let fib n = case n of
+  0 -> 0
+| 1 -> 1
 | n -> (fib (n-1)) + (fib (n-2));
 ```
 
@@ -304,12 +304,12 @@ Yay! Note that when writing a `\` in GHCi you need to write it with two backslas
 
 A lot!
 
-* no operator precedences, user-defined or otherwise. Use parentheses to disambiguate. This includes "operator whitespace."
+* no operator precedences, user-defined or otherwise. This includes "operator whitespace" (a.k.a. juxtaposition). Use parentheses to disambiguate.
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
 * No arrays or any builtin data structures (linked lists and maps are especially important)
   - We do have tuples now, woo hoo!
+  - And now we have ADTs too! Although they need a little more work.
 * No type system yet (we plan to implement Hindley-Milner, or a modified version thereof)
-* No pattern matching yet
 * No TCO or any other optimizations
 * Token system hasn't been implemented yet
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
