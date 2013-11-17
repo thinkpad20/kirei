@@ -248,6 +248,32 @@ compileCase tempNum expr matches = case expr of
                 [] -> single $ J.throwNewError "Pattern match failed"
                 _ -> go v ms
 
+{-
+let foo = case bar of 1 -> 2 | _ -> 3;
+
+var foo=function(__arg0){if(__arg0===1){return 2;}else{return 3;}}(bar);
+
+let foo = case bar * 3 of 1 -> 2 | _ -> 3;
+
+var foo=function(__arg0){if(__arg0===1){return 2;}else{return 3;}}(bar*3);
+
+-}
+
+compileCaseToExpr :: Expr -> Matches -> J.Expr
+compileCaseToExpr expr matches = callGo (eToE expr)
+  where nm = "_a"
+        callGo e = J.Call (J.Function [nm] $ go (J.Var nm) matches) [e]
+        go :: J.Expr -> Matches -> J.Block
+        go v matches = case matches of
+          [] -> error "Empty case statement with no matches"
+          (pat, res):ms -> case boolAndAssigns v pat of
+            (Nothing, J.Block []) -> eToBlk res
+            (Nothing, assignments) -> assignments <> eToBlk res
+            (Just cond, assignments) -> single $
+              J.If cond (assignments <> eToBlk res) $ case ms of
+                [] -> single $ J.throwNewError "Pattern match failed"
+                _ -> go v ms
+
 compileCase' :: String -> J.Block
 compileCase' input = case grab input of
   Case expr matches -> compileCase 0 expr matches
@@ -316,7 +342,7 @@ eToE expr = case expr of
   Apply a (Tuple es) -> J.Call (eToE a) (eToE <$> es)
   Apply a b -> J.Call (eToE a) [eToE b]
   Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
-  Case _ _ -> error $ "Case in an expression"
+  Case expr matches -> compileCaseToExpr expr matches
   l@(Let v e e') -> error $ "Let statement in an expression: " ++ show l
   e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
 
