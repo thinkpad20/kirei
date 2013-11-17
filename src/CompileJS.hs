@@ -9,6 +9,7 @@ import Data.Monoid
 import Control.Applicative
 import Debug.Trace
 import Data.Char
+import Data.List
 
 (~>) = flip (.)
 infixr 9 ~>
@@ -256,6 +257,30 @@ matchesToBlock v matches = case matches of
         [] -> single $ J.throwNewError "Pattern match failed"
         _ -> matchesToBlock v ms
 
+{-
+datatype Foo =
+  Fuzz | Fizz a b Fozz;
+
+var Fuzz = ["Fuzz"]
+var Fizz = function (a, b, fozz) {
+  return ["Fizz", a, b, fozz];
+};
+-}
+
+makeConstructors :: Name -> [Constructor] -> J.Block
+makeConstructors name [] = error $
+  "Must have at least one constructor for datatype " ++ name
+makeConstructors _ cs = mconcat (construct ~> single <$> cs) where
+  tName :: TypeName -> String
+  tName (TypeName name []) = toLower <$> name
+  tName (TypeName name ts) = toLower <$> name ++ concatMap tName ts
+  construct :: Constructor -> J.Statement
+  construct (Constructor name types) = case types of
+    [] -> J.Assign (J.Var name) (J.Array [J.String name])
+    ts -> let ret ts = single $ J.Return $ J.Array (J.String name : ts) in
+          J.Assign (J.Var name)
+                   (J.Function (tName <$> ts) (ret $ J.Var . tName <$> ts))
+
 -- Compilation
 -- eToBlk compiles an expression to a block; this means that it will always
 -- end with a return statement.
@@ -269,6 +294,9 @@ eToBlk expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma e1 e2 -> compile e1 <> eToBlk e2
   Case expr matches -> compileCase 0 expr matches
+  Datatype name cs e' -> case e' of
+    Nothing -> makeConstructors name cs
+    Just e' -> makeConstructors name cs <> eToBlk e'
   e -> single $ J.Return $ eToE e
   where call e es = single $ J.Return $ J.Call e es
 
@@ -307,6 +335,9 @@ compile expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma l@(Let v e e') e2 -> compile l <> compile e2
   Comma e1 e2 -> compile e1 <> compile e2
+  Datatype name cs e' -> case e' of
+    Nothing -> makeConstructors name cs
+    Just e' -> makeConstructors name cs <> compile e'
   e -> single $ J.Expr $ eToE e
   where call e es = single $ J.Expr $ J.Call e es
 

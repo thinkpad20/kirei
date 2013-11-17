@@ -1,0 +1,21 @@
+datatype List =
+  Empty
+| Cons a (List)
+;
+
+let reverse list =
+  let rev l acc = case l of
+    Empty -> acc
+  | Cons a as -> rev as (Cons a acc);
+  rev list Empty;
+
+let plusplus list1 list2 = case list1 of
+  Empty -> list2
+| Cons a as -> Cons a (as ++ list2);
+
+let joinBy sep listOfLists = case listOfLists of
+  Empty -> Empty
+| Cons a as -> Cons a (Cons sep (joinBy sep as));
+
+let single a = Cons a Empty;
+

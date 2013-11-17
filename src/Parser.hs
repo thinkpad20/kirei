@@ -7,6 +7,16 @@ import Control.Applicative hiding ((<|>), many, optional)
 type Name = String
 type Matches = [(Expr, Expr)]
 
+--Maybe a -> NameWithParams "Maybe" [BoundName "a"]
+
+data TypeName = TypeName Name [TypeName]
+
+instance Show TypeName where
+  show (TypeName n []) = n
+  show (TypeName n params) = intercalate " " (n: (show <$> params))
+
+data Constructor = Constructor Name [TypeName] deriving Show
+
 data Expr =
   Bool Bool
   | Number Double
@@ -22,6 +32,7 @@ data Expr =
   | Case Expr Matches
   | Tuple [Expr]
   | Lambda Name Expr
+  | Datatype Name [Constructor] (Maybe Expr)
   deriving (Show)
 
 skip :: Parser ()
@@ -65,7 +76,10 @@ pString :: Parser String
 pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
 pVariable :: Parser String
-pVariable = checkParse $ many1 (letter <|> char '$')
+pVariable = checkParse $ do
+  first <- letter <|> char '$' <|> char '_'
+  rest <- many (letter <|> digit <|> char '$' <|> char '_')
+  return (first : rest)
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$:"
@@ -76,6 +90,19 @@ pParens = do
   case es of
     [e] -> return e
     es -> return $ Tuple es
+
+pDatatype :: Parser Expr
+pDatatype = Datatype <$ keyword "datatype" <*> pVariable
+                     <* keysim "=" <*> pConstructors
+                     <* keysim ";" <*> optionMaybe pExprs where
+  pSingleTypeName = TypeName <$> pVariable <*> pure []
+  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
+                              <*> many pSingleTypeName <* schar ')'
+  pConstructor = do
+    name <- pVariable
+    argumentTypes <- many (pSingleTypeName <|> pComplexTypeName)
+    return $ Constructor name argumentTypes
+  pConstructors = sepBy1 pConstructor (schar '|')
 
 pCase :: Parser Expr
 pCase = Case <$ keyword "case" <*> pExpr
@@ -143,7 +170,7 @@ pLet = do
     f (a:as) e = Lambda a (f as e)
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pLet, pApply]
+pExpr = choice [pIf, pLet, pDatatype, pApply]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)

@@ -12,15 +12,18 @@ import Control.Applicative ((<$>))
 usage = "Usage: kirei <input filename(s)> [output filename]"
 preamble = "var std = require(\"./std\");\nvar $IO = 0;\n"
 
+compileAndWrite :: String -> IO ()
+compileAndWrite fname = do
+  src <- readFile fname
+  writeFile (getName fname) (preamble ++ renderJS src)
+  putStrLn $ "Wrote output to " ++ getName fname
+  where
+    getName = splitOn "." ~> init ~> intercalate "." ~> (++ ".js")
+
 main = do
   args <- getArgs
   case args of
     [] -> putStrLn usage
-    (fname:_) -> do
-      src <- readFile fname
-      writeFile (getName fname) (preamble ++ renderJS src)
-      putStrLn $ "Wrote output to " ++ getName fname
-  where
-    getName = splitOn "." ~> init ~> intercalate "." ~> (++ ".js")
+    (fname:_) -> compileAndWrite fname
 
 
