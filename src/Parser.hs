@@ -5,6 +5,7 @@ import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
 
 type Name = String
+type Matches = [(Expr, Expr)]
 
 data Expr =
   Bool Bool
@@ -17,7 +18,7 @@ data Expr =
   | Apply Expr Expr
   | Dotted Expr Expr
   | Comma Expr Expr
-  | Case Expr [(Expr, Expr)]
+  | Case Expr Matches
   | Tuple [Expr]
   | Lambda Name Expr
   deriving (Show)
@@ -77,11 +78,11 @@ pParens = do
 
 pCase :: Parser Expr
 pCase = Case <$ keyword "case" <*> pExpr
-             <* keyword "of"   <*> sepBy1 getAlt (schar '|') where
-  getAlt = do
+             <* keyword "of"   <*> sepBy1 match (schar '|') where
+  match = do
     pattern <- pExpr
     keysim "->"
-    result <- pExpr
+    result <- pExprs
     return (pattern, result)
 
 pTerm :: Parser Expr

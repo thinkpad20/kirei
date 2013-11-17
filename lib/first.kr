@@ -1,7 +1,7 @@
 # straightforward factorial
 let fact n = if n < 2 then 1 else n * (fact (n - 1));
 
-# fancy fibonacci (runs in linear time, can be tail-call optimized)
+# fancy fibonacci (runs in linear time, can be tail-call optimized (although it isn't right now))
 let fib n =
   let f m acc prev =
     if m < 1 then prev

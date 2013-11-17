@@ -1,0 +1,10 @@
+"this is a #{foo} with some #{bar} in it"
+->
+"this is a " ++ render foo ++ " with some " ++ render bar ++ " in it"
+
+let printFile fName io =
+  print "The file named #{name} has the contents #{contents}" io where
+  contents = name ! open io ! read,
+  name     = OS.abspath fName io;
+
+

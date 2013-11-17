@@ -1,0 +1,16 @@
+[1..10]
+  -> List.iterateFrom 1 10
+
+typeclass Iter a =
+  postfix (++) : a -> a;
+;
+
+implement Iter for Num =
+  let x++ = x + 1;
+;
+
+sig List.iterateFrom : a :~ Iter -> a -> [a];
+let List.iterateFrom a b =
+  let f x y acc =
+    if x == y then acc else f x++ y (x :: acc);
+  f a b [];

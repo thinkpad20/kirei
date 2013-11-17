@@ -13,19 +13,13 @@ data Statement = Expr Expr
                | If' Expr Block
                | While Expr Block
                | For Expr Expr Expr Block
-               | Assign String Expr
+               | Assign Expr Expr
                | Return Expr
                | Return'
+               | Throw Expr
                | Break
 
-data Expr = Term Term
-          | Dot Expr Expr
-          | Call Expr [Expr]
-          | Binary String Expr Expr
-          | Unary String Expr
-          | Ternary Expr Expr Expr
-
-data Term = Bool Bool
+data Expr = Bool Bool
           | Number Double
           | Var Name
           | String String
@@ -33,28 +27,34 @@ data Term = Bool Bool
           | This
           | Function [Name] Block
           | Parens Expr
-
-
-instance Show Term where
-  show (Number n) = show n
-  show (Var n) = n
-  show (String s) = show s
-  show This = "this"
-  show (Function ns blk) = c ["function(", sep ns, "){", show blk, "}"]
-    where { c = concat; sep = intercalate "," }
-  show (Bool True) = "true"
-  show (Bool False) = "false"
-  show (Array exprs) = c ["[", sep $ map show exprs, "]"]
-    where { c = concat; sep = intercalate "," }
+          | Dot Expr Expr
+          | Call Expr [Expr]
+          | ArrayReference Expr Expr
+          | Binary String Expr Expr
+          | Unary String Expr
+          | Ternary Expr Expr Expr
+          | New Expr
 
 instance Show Expr where
-  show (Term term) = show term
-  show (Dot e1 e2) = show e1 ++ "." ++ show e2
-  show (Call e es) = concat [show e, "(", intercalate "," (map show es), ")"]
-  show (Binary op e1 e2) = concat [show e1, op, show e2]
-  show (Unary op e) = op ++ show e
-  show (Ternary e1 e2 e3) = concat ["(", show e1, "?", show e2,
+  show t = case t of
+    Number n -> if isInt n then show $ floor n else show n
+    Var n -> n
+    String s -> show s
+    This -> "this"
+    Function ns blk -> c ["function(", sep ns, "){", show blk, "}"]
+    Bool True -> "true"
+    Bool False -> "false"
+    Array exprs -> c ["[", sep $ map show exprs, "]"]
+    Dot e1 e2 -> show e1 ++ "." ++ show e2
+    Call e es -> c [show e, "(", intercalate "," (map show es), ")"]
+    Binary op e1 e2 -> c [show e1, op, show e2]
+    Unary op e -> op ++ show e
+    Ternary e1 e2 e3 -> c ["(", show e1, "?", show e2,
                                     ":", show e3, ")"]
+    ArrayReference e1 e2 -> show e1 ++ "[" ++ show e2 ++ "]"
+    New e -> "new " ++ show e
+    where c   = concat
+          sep = intercalate ","
 
 instance Show Statement where
   show (Expr e) = show e ++ ";"
@@ -63,10 +63,12 @@ instance Show Statement where
   show (While e b) = "while(" ++ show e ++ "){" ++ show b ++ "}"
   show (For e1 e2 e3 b) = concat ["for(", show e1,";", show e2, ";", show e3,
                            "){", show b, "}"]
-  show (Assign n e) = "var " ++ n ++ "=" ++ show e ++ ";"
+  show (Assign (Var n) e) = "var " ++ n ++ "=" ++ show e ++ ";"
+  show (Assign e e') = show e ++ "=" ++ show e'
   show Return' = "return;"
   show (Return e) = "return " ++ show e ++ ";"
   show Break = "break;"
+  show (Throw e) = "throw " ++ show e ++ ";"
 
 instance Show Block where
   show (Block stmts) = concat $ map show stmts
@@ -74,9 +76,6 @@ instance Show Block where
 instance Monoid Block where
   mempty = Block []
   mappend (Block a) (Block b) = Block $ a ++ b
-
-single :: Statement -> Block
-single s = Block [s]
 
 indentation = 2
 
@@ -96,34 +95,39 @@ instance Render Block where
                          rec n b, "\n", sp n "}"]
     r n (For e1 e2 e3 b) = c [sp n "for (", render n e1, ";", render n e2,
                               ";", render n e3, ") {", rec n b, "\n", sp n "}"]
-    r n (Assign v e) = c [sp n "var ", v, " = ", render n e, ";\n"]
+    r n (Assign (Var v) e) = c [sp n "var ", v, " = ", render n e, ";\n"]
+    r n (Assign e e') = c [render n e, " = ", render n e', ";\n"]
     r n Return' = sp n "return;"
     r n (Return e) = sp n "return " ++ render n e ++ ";"
     r n Break = sp n "break;"
     r n (Expr e) = c [sp n $ render n e, ";\n"]
 
-instance Render Term where
-  render _ (Number n) = show n
-  render _ (Var n) = n
-  render _ (String s) = show s
-  render _ This = "this"
-  render _ (Bool True) = "true"
-  render _ (Bool False) = "false"
-  render n (Function ns blk) = c ["function (",
-                                 intercalate ", " ns,
-                                 ") {\n", render (n+1) blk, sp n "}"]
-    where c = concat
-          sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
-  render n (Array exprs) = c ["[", sep $ map (render n) exprs, "]"]
-    where { c = concat; sep = intercalate "," }
-
 instance Render Expr where
   render n e = case e of
-    Term term -> render n term
+    Number n -> if isInt n then show $ floor n else show n
+    Var n -> n
+    String s -> show s
+    This -> "this"
+    Bool True -> "true"
+    Bool False -> "false"
+    Function ns blk -> c ["function (", sep ns, ") {\n",
+                         render (n+1) blk, sp n "}"]
+    Array exprs -> c ["[", sep $ map (render n) exprs, "]"]
     Dot e1 e2 -> render n e1 ++ "." ++ render n e2
     Call e es -> c [render n e, "(", intercalate ", " (map (render n) es), ")"]
+    ArrayReference e e' -> c [render n e, "[", render n e', "]"]
     Binary op e1 e2 -> c [render n e1, " ", op, " ", render n e2]
     Unary op e -> op ++ render n e
     Ternary e1 e2 e3 -> c ["(", render n e1, " ? ", render n e2, " : ",
                            render n e3, ")"]
     where c = concat
+          sep = intercalate ","
+          sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
+
+--Returns if x is an int to n decimal places
+isIntTo :: (Integral a, RealFrac b) => b -> a -> Bool
+isIntTo x n = (round $ 10^(fromIntegral n)*(x-(fromIntegral $ round x)))==0
+
+isInt x = isIntTo x 10
+
+throwNewError msg = Throw $ New $ Call (Var "Error") [String msg]
