@@ -195,7 +195,7 @@ let fib n = case n of
 | n -> (fib (n-1)) + (fib (n-2));
 ```
 
-And that's about it. Of course, future syntax will be introduced for comments, pattern matching, type signatures, type and class declarations, data structure literals, etc.
+And that's about it. Of course, future syntax will be introduced for type signatures, type and class declarations, data structure literals, etc.
 
 ### Current status and usage
 
