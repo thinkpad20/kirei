@@ -268,18 +268,17 @@ var Fizz = function (a, b, fozz) {
 -}
 
 makeConstructors :: Name -> [Constructor] -> J.Block
-makeConstructors name [] = error $
-  "Must have at least one constructor for datatype " ++ name
-makeConstructors _ cs = mconcat (construct ~> single <$> cs) where
+makeConstructors name cs = mconcat (construct ~> single <$> cs) where
   tName :: TypeName -> String
   tName (TypeName name []) = toLower <$> name
   tName (TypeName name ts) = toLower <$> name ++ concatMap tName ts
   construct :: Constructor -> J.Statement
   construct (Constructor name types) = case types of
     [] -> J.Assign (J.Var name) (J.Array [J.String name])
-    ts -> let ret ts = single $ J.Return $ J.Array (J.String name : ts) in
-          J.Assign (J.Var name)
-                   (J.Function (tName <$> ts) (ret $ J.Var . tName <$> ts))
+    ts -> J.Assign (J.Var name) $ func (tName <$> ts) where
+      toVars = J.Var . tName <$> ts
+      func [] = J.Array (J.String name : toVars)
+      func (name:names) = J.Function [name] $ single $ J.Return $ func names
 
 -- Compilation
 -- eToBlk compiles an expression to a block; this means that it will always
