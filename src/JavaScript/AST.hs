@@ -35,6 +35,8 @@ data Expr = Bool Bool
           | Ternary Expr Expr Expr
           | New Expr
 
+(~>) = flip (.)
+
 instance Show Expr where
   show t = case t of
     Number n -> if isInt n then show $ floor n else show n
@@ -57,18 +59,21 @@ instance Show Expr where
           sep = intercalate ","
 
 instance Show Statement where
-  show (Expr e) = show e ++ ";"
-  show (If' e b) = concat ["if(", show e, "){", show b, "}"]
-  show (If e b1 b2) = concat [show (If' e b1), "else{", show b2, "}"]
-  show (While e b) = "while(" ++ show e ++ "){" ++ show b ++ "}"
-  show (For e1 e2 e3 b) = concat ["for(", show e1,";", show e2, ";", show e3,
-                           "){", show b, "}"]
-  show (Assign (Var n) e) = "var " ++ n ++ "=" ++ show e ++ ";"
-  show (Assign e e') = show e ++ "=" ++ show e'
-  show Return' = "return;"
-  show (Return e) = "return " ++ show e ++ ";"
-  show Break = "break;"
-  show (Throw e) = "throw " ++ show e ++ ";"
+  show s = let c = concat in case s of
+    Expr e -> show e ++ ";"
+    If' e b -> c ["if(", show e, "){", show b, "}"]
+    If e b1 b2 -> c [show (If' e b1), "else", showElse b2] where
+      showElse (Block [i@(If _ _ _)]) = " " ++ show i
+      showElse _ = "{" ++ show b2 ++ "}"
+    While e b -> "while(" ++ show e ++ "){" ++ show b ++ "}"
+    For e1 e2 e3 b -> c ["for(", show e1,";", show e2, ";", show e3,
+                             "){", show b, "}"]
+    Assign (Var n) e -> "var " ++ n ++ "->" ++ show e ++ ";"
+    Assign e e' -> show e ++ "->" ++ show e'
+    Return' -> "return;"
+    Return e -> "return " ++ show e ++ ";"
+    Break -> "break;"
+    Throw e -> "throw " ++ show e ++ ";"
 
 instance Show Block where
   show (Block stmts) = concat $ map show stmts
@@ -82,25 +87,29 @@ indentation = 2
 class Render a where
   render :: Int -> a -> String
 
+instance Render Statement where
+  render n stmt = concat $ case stmt of
+    If' e b -> ["if (", render n e, ") {", rec b, sp n "}"]
+    If e b1 b2 -> ["if (", render n e, ") {", rec b1, sp n "}",
+      case b2 of
+        Block [i@(If e block1 block2)] -> " else " ++ render n i
+        _ -> " else {" ++ rec b2 ++ sp n "}"]
+    While e b -> ["while (", render n e, ") {", rec b, sp n "}"]
+    For e1 e2 e3 b -> ["for (", render n e1, ";", render n e2,
+                         ";", render n e3, ") {", rec b, sp n "}"]
+    Assign (Var v) e -> ["var ", v, " = ", render n e, ";"]
+    Assign e e' -> [render n e, " = ", render n e', ";"]
+    Return' -> ["return;"]
+    Return e -> ["return ", render n e, ";"]
+    Break -> ["break;"]
+    Expr e -> [render n e, ";"]
+    where sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
+          rec (Block stmts) =
+            sp (n+1) $ concatMap (render $ n+1) stmts
+
+
 instance Render Block where
-  render indent (Block stmts) = c $ map (r indent) stmts where
-    c = concat
-    sp n s = replicate (n * indentation) ' ' ++ s
-    rec :: Int -> Block -> String
-    rec n (Block stmts) = "\n" ++ c (map (r (n + 1)) stmts)
-    r :: Int -> Statement -> String
-    r n (If' e b) = c [sp n "if (", render n e, ") {", rec n b, "\n", sp n "}"]
-    r n (If e b1 b2) = c [r n (If' e b1), "\n", sp n "else {", rec n b2, "\n", sp n "}"]
-    r n (While e b) = c [sp n "while (", render n e, ") {",
-                         rec n b, "\n", sp n "}"]
-    r n (For e1 e2 e3 b) = c [sp n "for (", render n e1, ";", render n e2,
-                              ";", render n e3, ") {", rec n b, "\n", sp n "}"]
-    r n (Assign (Var v) e) = c [sp n "var ", v, " = ", render n e, ";\n"]
-    r n (Assign e e') = c [render n e, " = ", render n e', ";\n"]
-    r n Return' = sp n "return;"
-    r n (Return e) = sp n "return " ++ render n e ++ ";"
-    r n Break = sp n "break;"
-    r n (Expr e) = c [sp n $ render n e, ";\n"]
+  render indent (Block stmts) = concat $ map (render indent) stmts
 
 instance Render Expr where
   render n e = case e of
@@ -110,8 +119,8 @@ instance Render Expr where
     This -> "this"
     Bool True -> "true"
     Bool False -> "false"
-    Function ns blk -> c ["function (", sep ns, ") {\n",
-                         render (n+1) blk, sp n "}"]
+    Function ns blk -> c ["function (", sep ns, ") {",
+                         sp (n+1) $ render (n+1) blk, sp n "}"]
     Array exprs -> c ["[", sep $ map (render n) exprs, "]"]
     Dot e1 e2 -> render n e1 ++ "." ++ render n e2
     Call e es -> c [render n e, "(", intercalate ", " (map (render n) es), ")"]
