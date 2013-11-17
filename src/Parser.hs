@@ -13,6 +13,7 @@ data Expr =
   | String String
   | Symbol Name
   | Var Name
+  | Underscore
   | If Expr Expr Expr
   | Let Name Expr (Maybe Expr)
   | Apply Expr Expr

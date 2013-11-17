@@ -68,7 +68,7 @@ instance Show Statement where
     While e b -> "while(" ++ show e ++ "){" ++ show b ++ "}"
     For e1 e2 e3 b -> c ["for(", show e1,";", show e2, ";", show e3,
                              "){", show b, "}"]
-    Assign (Var n) e -> "var " ++ n ++ "->" ++ show e ++ ";"
+    Assign (Var n) e -> "var " ++ n ++ " = " ++ show e ++ ";"
     Assign e e' -> show e ++ "->" ++ show e'
     Return' -> "return;"
     Return e -> "return " ++ show e ++ ";"
@@ -97,40 +97,42 @@ instance Render Statement where
     While e b -> ["while (", render n e, ") {", rec b, sp n "}"]
     For e1 e2 e3 b -> ["for (", render n e1, ";", render n e2,
                          ";", render n e3, ") {", rec b, sp n "}"]
-    Assign (Var v) e -> ["var ", v, " = ", render n e, ";"]
-    Assign e e' -> [render n e, " = ", render n e', ";"]
+    Assign (Var v) e -> ["var ", v, " = ", render n e, ";\n"]
+    Assign e e' -> [render n e, " = ", render n e', ";\n"]
     Return' -> ["return;"]
     Return e -> ["return ", render n e, ";"]
     Break -> ["break;"]
     Expr e -> [render n e, ";"]
+    Throw e -> ["throw ", render n e, ";"]
     where sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
-          rec (Block stmts) =
-            sp (n+1) $ concatMap (render $ n+1) stmts
+          rec block = "\n" ++ render (n+1) block
+            --concatMap (sp (n+1) . render (n+1)) stmts
 
 
 instance Render Block where
-  render indent (Block stmts) = concat $ map (render indent) stmts
+  render n (Block stmts) = concat $ map (sp n . render n) stmts where
+    sp n s = replicate (n * indentation) ' ' ++ s
 
 instance Render Expr where
-  render n e = case e of
-    Number n -> if isInt n then show $ floor n else show n
-    Var n -> n
-    String s -> show s
-    This -> "this"
-    Bool True -> "true"
-    Bool False -> "false"
-    Function ns blk -> c ["function (", sep ns, ") {",
-                         sp (n+1) $ render (n+1) blk, sp n "}"]
-    Array exprs -> c ["[", sep $ map (render n) exprs, "]"]
-    Dot e1 e2 -> render n e1 ++ "." ++ render n e2
-    Call e es -> c [render n e, "(", intercalate ", " (map (render n) es), ")"]
-    ArrayReference e e' -> c [render n e, "[", render n e', "]"]
-    Binary op e1 e2 -> c [render n e1, " ", op, " ", render n e2]
-    Unary op e -> op ++ render n e
-    Ternary e1 e2 e3 -> c ["(", render n e1, " ? ", render n e2, " : ",
+  render n e = concat $ case e of
+    Number n -> [if isInt n then show $ floor n else show n]
+    Var n -> [n]
+    String s -> [show s]
+    This -> ["this"]
+    Bool True -> ["true"]
+    Bool False -> ["false"]
+    Function ns blk -> ["function (", sep ns, ") {\n",
+                         render (n+1) blk, sp n "}"]
+    Array exprs -> ["[", sep $ map (render n) exprs, "]"]
+    Dot e1 e2 -> [render n e1, ".", render n e2]
+    Call e es -> [render n e, "(", intercalate ", " (map (render n) es), ")"]
+    ArrayReference e e' -> [render n e, "[", render n e', "]"]
+    Binary op e1 e2 -> [render n e1, " ", op, " ", render n e2]
+    Unary op e -> [op, render n e]
+    Ternary e1 e2 e3 -> ["(", render n e1, " ? ", render n e2, " : ",
                            render n e3, ")"]
-    where c = concat
-          sep = intercalate ","
+    New e -> ["new ", render n e]
+    where sep = intercalate ", "
           sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
 
 --Returns if x is an int to n decimal places

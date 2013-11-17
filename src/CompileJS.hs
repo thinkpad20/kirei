@@ -234,11 +234,11 @@ if (foo == 1) {
 -- is that we need to be able to handle ifs and elses correctly.
 compileCase :: Int -> Expr -> Matches -> J.Block
 compileCase tempNum expr matches = case expr of
-  (Var name) -> doIt (J.Var name) matches
-  _ -> single (J.Assign mkVName (eToE expr)) <> doIt (eToE expr) matches
+  (Var name) -> go (J.Var name) matches
+  _ -> single (J.Assign mkVName (eToE expr)) <> go mkVName matches
   where mkVName = J.Var $ "__temp" ++ show tempNum
-        doIt :: J.Expr -> Matches -> J.Block
-        doIt v matches = case matches of
+        go :: J.Expr -> Matches -> J.Block
+        go v matches = case matches of
           [] -> error "Empty case statement with no matches"
           (pat, res):ms -> case boolAndAssigns v pat of
             (Nothing, J.Block []) -> eToBlk res
@@ -246,7 +246,7 @@ compileCase tempNum expr matches = case expr of
             (Just cond, assignments) -> single $
               J.If cond (assignments <> eToBlk res) $ case ms of
                 [] -> single $ J.throwNewError "Pattern match failed"
-                _ -> doIt v ms
+                _ -> go v ms
 
 compileCase' :: String -> J.Block
 compileCase' input = case grab input of
@@ -294,6 +294,7 @@ eToBlk expr = case expr of
   Apply a (Tuple es) -> call (eToE a) (eToE <$> es)
   Apply a b -> call (eToE a) [eToE b]
   Comma e1 e2 -> compile e1 <> eToBlk e2
+  Case expr matches -> compileCase 0 expr matches
   e -> single $ J.Return $ eToE e
   where call e es = single $ J.Return $ J.Call e es
 
@@ -315,6 +316,7 @@ eToE expr = case expr of
   Apply a (Tuple es) -> J.Call (eToE a) (eToE <$> es)
   Apply a b -> J.Call (eToE a) [eToE b]
   Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
+  Case _ _ -> error $ "Case in an expression"
   l@(Let v e e') -> error $ "Let statement in an expression: " ++ show l
   e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
 
