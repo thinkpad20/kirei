@@ -47,6 +47,23 @@ skip = spaces *> (lineComment <|> spaces) where
     newline <|> (eof >> return ' ')
     return ()
 
+precedences = [
+                ["!",  "@"],
+                [">>", ">>="],
+                ["||", "&&"],
+                ["==", "!=", "<", ">", "<=", ">="],
+                ["::", "++"],
+                ["+",  "-"],
+                ["*",  "/"],
+                ["^"],
+                ["~>", "<~", "!!"]
+              ]
+
+pBinary :: [[String]] -> Parser Expr
+pBinary = pFrom where
+  pFrom [] = pApply
+  pFrom (p:ps) = pRightAssoc (pFrom ps) (choice $ try . lexeme . string <$> p)
+
 keywords = ["if", "then", "else", "True", "False",
             "let", "def", "sig", "case", "of"]
 keySyms = ["->", "=>", "|", "=", ";", "\\", "/*"]
@@ -86,7 +103,8 @@ pVariable = checkParse $ do
   return (first : rest)
 
 pSymbol :: Parser String
-pSymbol = checkParse $ many1 $ oneOf "><=+-*/^~!%@&$:"
+pSymbol = checkParse $ (many1 $ oneOf "><=+-*/^~!%@&$:")
+  <|> between (char '`') (char '`') pVariable
 
 pList :: Parser Expr
 pList = List <$> between (schar '[') (schar ']') get where
@@ -131,24 +149,34 @@ pTerm = choice [ Bool   <$> pBool,
                  Number <$> pDouble,
                  String <$> pString,
                  Var    <$> pVariable,
-                 Symbol <$> pSymbol,
                  pParens,
                  pLambda,
                  pCase,
                  pList]
 
+--pBinary :: Parser Expr
+--pBinary = pRightAssoc (pRightAssoc pApply ((many1 $ oneOf "*/") <* spaces)) ((many1 $ oneOf "+-") <* spaces)
+
+pRightAssoc :: Parser Expr -> Parser String -> Parser Expr
+pRightAssoc pLeft pSym = pLeft >>= loop where
+  loop left = do
+    sym <- pSym
+    right <- optionMaybe $ pRightAssoc pLeft pSym
+    return $ case right of
+      Nothing -> Apply (Symbol sym) left
+      Just r -> Apply (Apply (Symbol sym) left) r
+    <|> return left
+
 pApply :: Parser Expr
-pApply = pDotted >>= \res -> parseRest res where
-  parseRest res = do
-    y <- pTerm -- run the parser again
-    case y of
-      (Symbol s) -> parseRest (Apply y res) -- if a symbol, flip the order
-      _ -> parseRest (Apply res y) -- otherwise, keep chainin' along
+pApply = pDotted >>= parseRest where
+  parseRest res = do -- res is a
+    term <- pTerm -- run the parser again
+    parseRest (Apply res term)
     <|> return res -- at some point the second parse will fail; then
                    -- return what we have so far
 
 pDotted :: Parser Expr
-pDotted = pTerm >>= \res -> parseRest res where
+pDotted = pTerm >>= parseRest where
   parseRest res = do
     keysim "."
     y <- pExpr
@@ -184,7 +212,7 @@ pLet = do
     f (a:as) e = Lambda a (f as e)
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pLet, pDatatype, pApply]
+pExpr = choice [pIf, pLet, pDatatype, pBinary precedences, pApply]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)

@@ -1,0 +1,74 @@
+pattern compilation as dfs
+
+case x of
+  [2, e, 7] -> 10
+
+case x of
+  (2::a::7::[]) -> 10
+
+compile e k =
+  if e is a constructor c:
+    ([if varname[0] == c], [], 1)
+
+  if e is a literal n:
+    ([if varname[i] == n], [], i+1)
+
+  if e is a variable v:
+    ([], [v = varname[k]], k+1)
+
+  if e is an apply a b:
+    bools, assigns, nextIndex = compile a k
+
+
+cdfs(i, vname, e):
+  if e is literal:
+    return (vname[i] == e, [], i)
+  if e is a variable a:
+    return ([], [var a = vname[i]], i)
+  else if e is apply(a, b):
+    b1, a1, j = cdfs(i, vname, a)
+    b2, a2, k = cdfs(i, vname[i], b)
+    return (b1 && b2, a1 ++ a2, k)
+
+
+
+
+   ::
+  /  \
+ 2   ::
+    /  \
+   a   ::
+      /  \
+     7  Empty
+
+data Boz = . | N Int Boz Boz
+
+     N(5)
+     /  \
+   N(3) N(4)
+   / \   / \
+  .   . .  N(6)
+          /   \
+        N(8)   .
+        / \
+       .   .
+
+for ex
+N 8 . . means Apply (Apply (Apply N 8) .) .
+
+
+      Apply
+      /    \
+    Apply   .
+    /    \
+  Apply   |
+ /   \    |
+N    6   /
+        /
+   Apply
+  /     \
+ Apply   .
+ /    \
+Apply  .
+/  \
+N   8
