@@ -48,7 +48,7 @@ skip = spaces *> (lineComment <|> spaces) where
     return ()
 
 precedences = [
-                ["!", "@"],
+                ["!", "$"], -- lowest precedence
                 [">>", ">>="],
                 ["||", "&&"],
                 ["==", "!=", "<", ">", "<=", ">="],
@@ -56,20 +56,23 @@ precedences = [
                 ["+",  "-"],
                 ["*",  "/"],
                 ["^"],
-                ["~>", "<~", "!!"]
+                ["~>", "<~", "!!"] --highest precedence
               ]
 
 pBinary :: [[String]] -> Parser Expr
 pBinary = pFrom where
   pFrom [] = pApply
-  pFrom (symbols:sss) = pRightAssoc (pFrom sss) (choice $ getSym <$> symbols)
+  pFrom (symbols:sss) = pLeftAssoc (pFrom sss) (choice $ getSym <$> symbols)
 
 keywords = ["if", "then", "else", "True", "False",
-            "let", "sig", "case", "of"]
+            "let", "sig", "case", "of", "$"]
 keySyms = ["->", "|", "=", ";", "\\"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
+
+symbolChars :: Parser Char
+symbolChars = oneOf "><=+-*/^~!%@&$:λ."
 
 getSym :: String -> Parser String
 getSym s = try $ do
@@ -82,7 +85,7 @@ keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
 keysim k = lexeme . try $
-  string k <* notFollowedBy (oneOf "><=+-*/^~!%@&:.")
+  string k <* notFollowedBy symbolChars
 
 checkParse p = lexeme . try $ do
   s <- p
@@ -111,7 +114,7 @@ pVariable = checkParse $ do
   return (first : rest)
 
 pSymbol :: Parser String
-pSymbol = checkParse $ (many1 $ oneOf "><=+-*/^~!%@&$:")
+pSymbol = checkParse $ many1 symbolChars
   <|> between (char '`') (char '`') pVariable
 
 pList :: Parser Expr
@@ -148,27 +151,29 @@ pCase = Case <$ keyword "case" <*> pExpr
              <* keyword "of"   <*> sepBy1 pMatch (schar '|') where
   pMatch = (,) <$> pExpr <* keysim "->" <*> pExprs
 
+pVariableOrUnderscore :: Parser Expr
+pVariableOrUnderscore = do
+  v <- pVariable
+  if v == "_" then return Underscore else return $ Var v
+
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
                  Number <$> pDouble,
                  String <$> pString,
-                 Var    <$> pVariable,
+                 pVariableOrUnderscore,
                  pParens,
                  pLambda,
                  pCase,
                  pList]
 
---pBinary :: Parser Expr
---pBinary = pRightAssoc (pRightAssoc pApply ((many1 $ oneOf "*/") <* spaces)) ((many1 $ oneOf "+-") <* spaces)
-
-pRightAssoc :: Parser Expr -> Parser String -> Parser Expr
-pRightAssoc pLeft pSym = pLeft >>= loop where
+pLeftAssoc :: Parser Expr -> Parser String -> Parser Expr
+pLeftAssoc pLeft pSym = pLeft >>= loop where
   loop left = do
     sym <- pSym
-    right <- optionMaybe $ pRightAssoc pLeft pSym
+    right <- optionMaybe $ pLeftAssoc pLeft pSym
     return $ case right of
       Nothing -> Apply (Symbol sym) left
-      Just r -> Apply (Apply (Symbol sym) left) r
+      Just right -> Apply (Apply (Symbol sym) left) right
     <|> return left
 
 pApply :: Parser Expr
@@ -194,9 +199,9 @@ pIf = If <$ keyword "if"   <*> pExpr
 
 pLambda :: Parser Expr
 pLambda = do
-  keysim "\\"
+  keysim "\\" <|> keysim "λ"
   vars <- many pVariable
-  keysim "->"
+  keysim "->" <|> keysim "."
   expr <- pExpr
   return $ lambda vars expr where
     lambda [] e = e
