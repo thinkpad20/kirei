@@ -57,7 +57,7 @@ var getTyped = function (io) {
 getTyped($IO);
 ```
 
-Note that `println("Write something:")(io)` is written in a curried manner (meaning that `println("foo")` returns a function, into which the next argument `io` is passed). If you haven't encountered currying before, it's basically a way to supply *some* of the arguments to a function, and produce a new function which takes the remaining arguments. So if `add a b = a + b`, then `add 5` is a function which takes one number and returns that number plus 5. Google for more details :). **Note** that we also support standard multivariate functions as would be found in JavaScript, through tuples. We'll explain this more later.
+Note that `println("Write something:")(io)` is written in a curried manner (meaning that `println("foo")` returns a function, into which the next argument `io` is passed). If you haven't encountered currying before, it's basically a way to supply *some* of the arguments to a function, and produce a new function which takes the remaining arguments. So if `add a b = a + b`, then `add 5` is a function which takes one number and returns that number plus 5. Google for more details :). Also note that we also support standard multivariate functions as would be found in JavaScript, through tuples. We'll explain this more later.
 
 ### The Token System
 
