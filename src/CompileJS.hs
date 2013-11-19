@@ -116,7 +116,7 @@ eToBlk expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma e1 e2 -> compile e1 <> eToBlk e2
   Case expr matches -> compileCase 0 expr matches
-  Datatype name cs e' -> case e' of
+  Datatype name tnames cs e' -> case e' of
     Nothing -> makeConstructors name cs
     Just e' -> makeConstructors name cs <> eToBlk e'
   e -> single $ J.Return $ eToE e
@@ -160,7 +160,7 @@ compile expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma l@(Let v e e') e2 -> compile l <> compile e2
   Comma e1 e2 -> compile e1 <> compile e2
-  Datatype name cs e' -> case e' of
+  Datatype name tnames cs e' -> case e' of
     Nothing -> makeConstructors name cs
     Just e' -> makeConstructors name cs <> compile e'
   e -> single $ J.Expr $ eToE e

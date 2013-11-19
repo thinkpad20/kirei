@@ -31,7 +31,7 @@ data Expr =
   | Tuple [Expr]
   | Lambda Name Expr
   | List ListLiteral
-  | Datatype Name [Constructor] (Maybe Expr)
+  | Datatype Name [Name] [Constructor] (Maybe Expr)
   deriving (Show)
 
 data ListLiteral =
@@ -134,7 +134,7 @@ pParens = do
     es -> return $ Tuple es
 
 pDatatype :: Parser Expr
-pDatatype = Datatype <$ keyword "datatype" <*> pVariable
+pDatatype = Datatype <$ keyword "datatype" <*> pVariable <*> many pVariable
                      <* keysim "=" <*> pConstructors
                      <* keysim ";" <*> optionMaybe pExprs where
   pSingleTypeName = TypeName <$> pVariable <*> pure []
