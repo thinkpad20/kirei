@@ -49,13 +49,15 @@ And its translation to an imperative language (we're currently using JavaScript)
 
 ```javascript
 var getTyped = function (io) {
-  println("Write something:", io);
+  println("Write something:")(io);
   var s = getLine(io);
-  return println("You typed: " + s, io);
+  return println("You typed: " + s)(io);
 };
 
 getTyped($IO);
 ```
+
+Note that `println("Write something:")(io)` is written in a curried manner (meaning that `println("foo")` returns a function, into which the next argument `io` is passed). If you haven't encountered currying before, it's basically a way to supply *some* of the arguments to a function, and produce a new function which takes the remaining arguments. So if `add a b = a + b`, then `add 5` is a function which takes one number and returns that number plus 5. Google for more details :). Also note that we also support standard multivariate functions as would be found in JavaScript, through tuples. We'll explain this more later.
 
 ### The Token System
 
@@ -179,6 +181,14 @@ let fact2 = \n ->
   factR n;
 ```
 
+You can also write functions without a lambda expression using a Haskell/ML-style syntax:
+
+```haskell
+let fib n = if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
+# the following is equivalent
+let fib' = \n -> if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
+```
+
 Single-line comments start with `#`; there are no block comments yet.
 
 ```
@@ -195,7 +205,25 @@ let fib n = case n of
 | n -> (fib (n-1)) + (fib (n-2));
 ```
 
-And that's about it. Of course, future syntax will be introduced for type signatures, type and class declarations, data structure literals, etc.
+You can declare algebraic data types with a Haskell-esque syntax:
+
+```
+datatype List a =
+  Empty
+| Cons a (List a);
+
+let reverse list = 
+  let loop list2 accumulator = case list2 of
+    Empty -> accumulator
+  | Cons a as -> loop as (Cons a accumulator);
+  loop list Empty;
+  
+let foo = [1..6];
+let bar = [5,4,3,2,1];
+assert foo == bar;
+```
+
+And that's about it. Of course, future syntax will be introduced for type signatures, more syntactic sugar, and a bit more. But that's close to everything.
 
 ### Current status and usage
 
