@@ -181,6 +181,14 @@ let fact2 = \n ->
   factR n;
 ```
 
+You can also write functions without a lambda expression using a Haskell/ML-style syntax:
+
+```haskell
+let fib n = if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
+# the following is equivalent
+let fib' = \n -> if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
+```
+
 Single-line comments start with `#`; there are no block comments yet.
 
 ```
@@ -197,7 +205,25 @@ let fib n = case n of
 | n -> (fib (n-1)) + (fib (n-2));
 ```
 
-And that's about it. Of course, future syntax will be introduced for type signatures, type and class declarations, data structure literals, etc.
+You can declare algebraic data types with a Haskell-esque syntax:
+
+```
+datatype List a =
+  Empty
+| Cons a (List a);
+
+let reverse list = 
+  let loop list2 accumulator = case list2 of
+    Empty -> accumulator
+  | Cons a as -> loop as (Cons a accumulator);
+  loop list Empty;
+  
+let foo = [1..6];
+let bar = [5,4,3,2,1];
+assert foo == bar;
+```
+
+And that's about it. Of course, future syntax will be introduced for type signatures, more syntactic sugar, and a bit more. But that's close to everything.
 
 ### Current status and usage
 
