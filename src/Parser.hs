@@ -48,7 +48,7 @@ skip = spaces *> (lineComment <|> spaces) where
     return ()
 
 precedences = [
-                ["!",  "@"],
+                ["!", "@"],
                 [">>", ">>="],
                 ["||", "&&"],
                 ["==", "!=", "<", ">", "<=", ">="],
@@ -62,13 +62,21 @@ precedences = [
 pBinary :: [[String]] -> Parser Expr
 pBinary = pFrom where
   pFrom [] = pApply
-  pFrom (p:ps) = pRightAssoc (pFrom ps) (choice $ try . lexeme . string <$> p)
+  pFrom (symbols:sss) = pRightAssoc (pFrom sss) (choice $ getSym <$> symbols)
 
 keywords = ["if", "then", "else", "True", "False",
-            "let", "def", "sig", "case", "of"]
-keySyms = ["->", "=>", "|", "=", ";", "\\", "/*"]
+            "let", "sig", "case", "of"]
+keySyms = ["->", "|", "=", ";", "\\"]
 lexeme p = p <* skip
+sstring = lexeme . string
 schar = lexeme . char
+
+getSym :: String -> Parser String
+getSym s = try $ do
+  sym <- pSymbol
+  if sym == s
+    then return sym
+    else unexpected $ concat ["Expected a '", s, "' but got a '", sym, "'"]
 
 keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
@@ -137,12 +145,8 @@ pDatatype = Datatype <$ keyword "datatype" <*> pVariable
 
 pCase :: Parser Expr
 pCase = Case <$ keyword "case" <*> pExpr
-             <* keyword "of"   <*> sepBy1 match (schar '|') where
-  match = do
-    pattern <- pExpr
-    keysim "->"
-    result <- pExprs
-    return (pattern, result)
+             <* keyword "of"   <*> sepBy1 pMatch (schar '|') where
+  pMatch = (,) <$> pExpr <* keysim "->" <*> pExprs
 
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
@@ -212,7 +216,7 @@ pLet = do
     f (a:as) e = Lambda a (f as e)
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pLet, pDatatype, pBinary precedences, pApply]
+pExpr = choice [pIf, pLet, pDatatype, pBinary precedences]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
