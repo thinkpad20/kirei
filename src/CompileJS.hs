@@ -144,7 +144,9 @@ eToE expr = case expr of
   List (ListLiteral list) -> J.Call (J.Var "mkList") (eToE <$> list)
   List (ListRange start stop) ->
     J.Call (J.Var "mkListRange") $ eToE <$> [start, stop]
-  l@(Let v e e') -> error $ "Let statement in an expression: " ++ show l
+  l@(Let name expr next) -> case next of
+    Nothing -> error $ "Unfinished let statement in an expression: " ++ show l
+    Just next -> J.Call (J.Function [name] (eToBlk next)) [eToE expr]
   e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
 
 -- compile is the top-level compilation function. It's almost identical to
