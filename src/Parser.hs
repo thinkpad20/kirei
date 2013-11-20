@@ -128,8 +128,9 @@ pList = List <$> between (schar '[') (schar ']') get where
 
 pParens :: Parser Expr
 pParens = do
-  es <- between (schar '(') (schar ')') $ sepBy1 pExpr (schar ',')
+  es <- between (schar '(') (schar ')') $ sepBy pExpr (schar ',')
   case es of
+    [] -> return $ Tuple []
     [e] -> return e
     es -> return $ Tuple es
 
