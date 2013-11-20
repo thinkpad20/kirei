@@ -65,7 +65,7 @@ pBinary = pFrom where
   pFrom (symbols:sss) = pLeftAssoc (pFrom sss) (choice $ getSym <$> symbols)
 
 keywords = ["if", "then", "else", "True", "False",
-            "let", "sig", "case", "of", "$"]
+            "let", "sig", "case", "of"]
 keySyms = ["->", "|", "=", ";", "\\"]
 lexeme p = p <* skip
 sstring = lexeme . string
@@ -167,19 +167,24 @@ pTerm = choice [ Bool   <$> pBool,
                  pList]
 
 pLeftAssoc :: Parser Expr -> Parser String -> Parser Expr
-pLeftAssoc pLeft pSym = pLeft >>= loop where
+pLeftAssoc pLeft pSym = optionMaybe pLeft >>= loop where
+  loop :: Maybe Expr -> Parser Expr
   loop left = do
     sym <- pSym
     right <- optionMaybe $ pLeftAssoc pLeft pSym
-    return $ case right of
-      Nothing -> Apply (Symbol sym) left
-      Just right -> Apply (Apply (Symbol sym) left) right
-    <|> return left
+    return $ case (left, right) of
+      (Nothing, Nothing) -> (Symbol sym)
+      (Just left, Nothing) -> Apply (Symbol sym) left
+      (Nothing, Just right) -> Lambda "x" (Apply (Apply (Symbol sym) (Var "x")) right)
+      (Just left, Just right) -> Apply (Apply (Symbol sym) left) right
+    <|> case left of
+      Nothing   -> unexpected "Empty expression"
+      Just left -> return left
 
 pApply :: Parser Expr
 pApply = pDotted >>= parseRest where
   parseRest res = do -- res is a
-    term <- pTerm -- run the parser again
+    term <- pDotted -- run the parser again
     parseRest (Apply res term)
     <|> return res -- at some point the second parse will fail; then
                    -- return what we have so far
@@ -188,7 +193,7 @@ pDotted :: Parser Expr
 pDotted = pTerm >>= parseRest where
   parseRest res = do
     keysim "."
-    y <- pExpr
+    y <- pTerm
     parseRest (Dotted res y)
     <|> return res
 
