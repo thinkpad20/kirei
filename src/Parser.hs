@@ -108,10 +108,9 @@ pString :: Parser String
 pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
 
 pVariable :: Parser String
-pVariable = checkParse $ do
-  first <- letter <|> char '$' <|> char '_'
-  rest <- many (letter <|> digit <|> char '$' <|> char '_')
-  return (first : rest)
+pVariable = checkParse $ (:) <$> first <*> rest where
+  first = letter <|> char '$' <|> char '_'
+  rest = many (letter <|> digit <|> char '$' <|> char '_')
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 symbolChars
