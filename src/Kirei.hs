@@ -15,7 +15,8 @@ preamble = reqStd ++ imprts ++ "\n" where
   imprts = concatMap require stdObjs
   stdObjs = ["$IO", "Cons", "Empty", "add", "sub", "mult",
              "div", "lt", "gt", "leq", "geq", "eq", "neq",
-             "and", "or", "neg", "mkList", "mkListRange"]
+             "and", "or", "neg", "mkList", "mkListRange",
+             "defaultShow", "printLn", "print"]
   require o = concat ["var ", o, " = std.", o, ";\n"]
 
 

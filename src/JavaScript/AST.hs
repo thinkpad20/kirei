@@ -97,6 +97,8 @@ instance Render Statement where
     While e b -> ["while (", render n e, ") {", rec b, sp n "}"]
     For e1 e2 e3 b -> ["for (", render n e1, ";", render n e2,
                          ";", render n e3, ") {", rec b, sp n "}"]
+    Assign (Var v) e@(Function _ _) ->
+      ["var ", v, " = ", render n e, ";\n\n"]
     Assign (Var v) e -> ["var ", v, " = ", render n e, ";\n"]
     Assign e e' -> [render n e, " = ", render n e', ";\n"]
     Return' -> ["return;"]

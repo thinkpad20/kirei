@@ -93,14 +93,14 @@ matchesToBlock v matches = case matches of
 makeConstructors :: Name -> [Constructor] -> J.Block
 makeConstructors name cs = mconcat (construct ~> single <$> cs) where
   tName :: TypeName -> String
-  tName (TypeName name []) = toLower <$> name
   tName (TypeName name ts) = toLower <$> name ++ concatMap tName ts
+  mkNames ts = zipWith (++) (tName <$> ts) (show <$> [0..])
   construct :: Constructor -> J.Statement
   construct (Constructor name types) = case types of
     [] -> J.Assign (J.Var name) (J.Array [J.String name])
-    ts -> J.Assign (J.Var name) $ func (tName <$> ts) where
-      toVars = J.Var . tName <$> ts
-      func [] = J.Array (J.String name : toVars)
+    ts -> J.Assign (J.Var name) $ func (mkNames ts) where
+      vars = J.Var <$> mkNames ts
+      func [] = J.Array (J.String name : vars)
       func (name:names) = J.Function [name] $ single $ J.Return $ func names
 
 -- Compilation
@@ -178,7 +178,7 @@ runTest = do
 toString :: String -> String
 toString ">" = "gt"
 toString "<" = "lt"
-toString "=" = "eq"
+toString "==" = "eq"
 toString ">=" = "geq"
 toString "<=" = "leq"
 toString "~" = "neg"

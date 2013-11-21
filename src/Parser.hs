@@ -62,7 +62,7 @@ precedences = [
 pBinary :: [[String]] -> Parser Expr
 pBinary = pFrom where
   pFrom [] = pApply
-  pFrom (symbols:sss) = pLeftAssoc (pFrom sss) (choice $ getSym <$> symbols)
+  pFrom (symbols:sss) = pRightAssoc (pFrom sss) (choice $ getSym <$> symbols)
 
 keywords = ["if", "then", "else", "True", "False",
             "let", "sig", "case", "of"]
@@ -165,17 +165,19 @@ pTerm = choice [ Bool   <$> pBool,
                  pCase,
                  pList]
 
-pLeftAssoc :: Parser Expr -> Parser String -> Parser Expr
-pLeftAssoc pLeft pSym = optionMaybe pLeft >>= loop where
+pRightAssoc :: Parser Expr -> Parser String -> Parser Expr
+pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
   loop :: Maybe Expr -> Parser Expr
   loop left = do
     sym <- pSym
-    right <- optionMaybe $ pLeftAssoc pLeft pSym
+    right <- optionMaybe $ pRightAssoc pLeft pSym
     return $ case (left, right) of
       (Nothing, Nothing) -> (Symbol sym)
       (Just left, Nothing) -> Apply (Symbol sym) left
-      (Nothing, Just right) -> Lambda "x" (Apply (Apply (Symbol sym) (Var "x")) right)
-      (Just left, Just right) -> Apply (Apply (Symbol sym) left) right
+      (Nothing, Just right) ->
+        Lambda "x" (Apply (Apply (Symbol sym) (Var "x")) right)
+      (Just left, Just right) ->
+        Apply (Apply (Symbol sym) left) right
     <|> case left of
       Nothing   -> unexpected "Empty expression"
       Just left -> return left
@@ -198,8 +200,8 @@ pDotted = pTerm >>= parseRest where
 
 pIf :: Parser Expr
 pIf = If <$ keyword "if"   <*> pExpr
-         <* keyword "then" <*> pExpr
-         <* keyword "else" <*> pExpr
+         <* keyword "then" <*> pExprs
+         <* keyword "else" <*> pExprs
 
 pLambda :: Parser Expr
 pLambda = do

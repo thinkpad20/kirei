@@ -1,0 +1,23 @@
+datatype Tree a =
+  Leaf
+| Branch a (Tree a) (Tree a);
+
+datatype Bool = Yes | No;
+let empty = Leaf;
+let singleton a = Branch a Leaf Leaf;
+
+let lookup a tree = case tree of
+  Leaf -> No
+| Branch b left right ->
+    if a == b then Yes
+    else if a < b then lookup a left
+    else lookup a right;
+
+let insert a tree = case tree of
+  Leaf -> Branch a Leaf Leaf
+| Branch b left right ->
+    if a == b then tree
+    else if a < b then Branch b (insert a left) right
+    else Branch b left (insert a right);
+
+printLn (defaultShow (insert 1 (singleton 2))) $IO;

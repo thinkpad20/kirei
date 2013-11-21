@@ -31,4 +31,6 @@ let fromRange stop start =
     else loop (step a) b (Cons a acc);
   (loop stop start Empty) ! reverse;
 
-(std.printList) (map (*7) (fromRange 1 30));
+map (*7) (fromRange 1 30) ! std.printList,
+
+printLn (defaultShow (fromRange 1 30)) $IO;
