@@ -7,13 +7,16 @@ import Control.Applicative hiding ((<|>), many, optional)
 type Name = String
 type Matches = [(Expr, Expr)]
 
-data TypeName = TypeName Name [TypeName]
+data TypeName = TypeName Name [TypeName] deriving (Ord, Eq)
+
+(~>) = flip (.)
+infixr 9 ~>
 
 instance Show TypeName where
   show (TypeName n []) = n
   show (TypeName n params) = intercalate " " (n: (show <$> params))
 
-data Constructor = Constructor Name [TypeName] deriving Show
+data Constructor = Constructor Name [TypeName] deriving (Show, Ord, Eq)
 
 data Expr =
   Bool Bool
@@ -32,12 +35,35 @@ data Expr =
   | Lambda Name Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
-  deriving (Show)
+  deriving (Eq, Ord)
 
 data ListLiteral =
   ListLiteral [Expr]
   | ListRange Expr Expr
-  deriving (Show)
+  deriving (Show, Eq, Ord)
+
+instance Show Expr where
+  show e = case e of
+    Bool b -> show b
+    Number n -> show n
+    String s -> show s
+    Symbol op -> op
+    Var v -> v
+    Underscore -> "_"
+    If c t f -> "if " ++ show c ++ " then " ++ show t ++ " else " ++ show f
+    Let n e1 e2 -> "let " ++ n ++ " = " ++ show e1 ++ (case e2 of
+      Nothing -> "; "
+      Just e2 -> show e2 ++ "; ")
+    Apply a b -> show a ++ " " ++ show b
+    Dotted a b -> show a ++ "." ++ show b
+    Comma a b -> show a ++ ", " ++ show b
+    Case e matches -> "case " ++ show e ++ " of " ++ sh matches where
+      sh = map s ~> intercalate "|"
+      s (ex, exs) = show ex ++ " -> " ++ show exs
+    Tuple es -> "(" ++ intercalate ", " (show <$> es) ++ ")"
+    Lambda n e -> "\\" ++ n ++ " -> " ++ show e
+    List (ListLiteral es) -> "[" ++ intercalate ", " (show <$> es) ++ "]"
+    List (ListRange start stop) -> "[" ++ show start ++ ".." ++ show stop ++ "]"
 
 skip :: Parser ()
 skip = spaces *> (lineComment <|> spaces) where

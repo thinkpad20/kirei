@@ -1,0 +1,7 @@
+we should be able to put any curried function in backticks, and have it be syntactic sugar for putting it in the front
+
+```
+let foo a b c = a + b + c;
+
+assert (foo 1 2 3 == 2 `foo 1` 3);
+```
