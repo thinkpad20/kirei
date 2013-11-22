@@ -1,4 +1,4 @@
-module Parser {-(grab, test, Expr(..))-} where
+module Parser (grab, Expr(..), Name) where
 
 import Text.ParserCombinators.Parsec
 import Data.List
@@ -35,35 +35,34 @@ data Expr =
   | Lambda Name Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
-  deriving (Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 data ListLiteral =
   ListLiteral [Expr]
   | ListRange Expr Expr
   deriving (Show, Eq, Ord)
 
-instance Show Expr where
-  show e = case e of
-    Bool b -> show b
-    Number n -> show n
-    String s -> show s
-    Symbol op -> op
-    Var v -> v
-    Underscore -> "_"
-    If c t f -> "if " ++ show c ++ " then " ++ show t ++ " else " ++ show f
-    Let n e1 e2 -> "let " ++ n ++ " = " ++ show e1 ++ (case e2 of
-      Nothing -> "; "
-      Just e2 -> show e2 ++ "; ")
-    Apply a b -> show a ++ " " ++ show b
-    Dotted a b -> show a ++ "." ++ show b
-    Comma a b -> show a ++ ", " ++ show b
-    Case e matches -> "case " ++ show e ++ " of " ++ sh matches where
-      sh = map s ~> intercalate "|"
-      s (ex, exs) = show ex ++ " -> " ++ show exs
-    Tuple es -> "(" ++ intercalate ", " (show <$> es) ++ ")"
-    Lambda n e -> "\\" ++ n ++ " -> " ++ show e
-    List (ListLiteral es) -> "[" ++ intercalate ", " (show <$> es) ++ "]"
-    List (ListRange start stop) -> "[" ++ show start ++ ".." ++ show stop ++ "]"
+prettyExpr e = case e of
+  Bool b -> show b
+  Number n -> show n
+  String s -> show s
+  Symbol op -> op
+  Var v -> v
+  Underscore -> "_"
+  If c t f -> "if " ++ prettyExpr c ++ " then " ++ prettyExpr t ++ " else " ++ prettyExpr f
+  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ (case e2 of
+    Nothing -> "; "
+    Just e2 -> prettyExpr e2 ++ "; ")
+  Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
+  Dotted a b -> prettyExpr a ++ "." ++ prettyExpr b
+  Comma a b -> prettyExpr a ++ ", " ++ prettyExpr b
+  Case e matches -> "case " ++ prettyExpr e ++ " of " ++ sh matches where
+    sh = map s ~> intercalate "|"
+    s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
+  Tuple es -> "(" ++ intercalate ", " (prettyExpr <$> es) ++ ")"
+  Lambda n e -> "\\" ++ n ++ " -> " ++ prettyExpr e
+  List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
+  List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++ prettyExpr stop ++ "]"
 
 skip :: Parser ()
 skip = spaces *> (lineComment <|> spaces) where
