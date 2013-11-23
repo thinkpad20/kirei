@@ -79,6 +79,36 @@ we need to instantiate that into a monotype, just for now (not store it)
 we choose a1 -> a1, return that
 now
 
+OK we're evaluating a lambda: \f -> f 2
+
+We push a new typemap onto the stack, with f being some unknown
+variable a:
+
+push {f: a}
+
+Then we go and evaluate the expression: Apply f 2
+
+we evaluate the argument, and get a number. But we don't know what
+f 2 returns. So we need to get a new type variable for that, b.
+
+Then we say OK, we need f to be a function that takes a number and
+returns a b. So we need to unify `a` and `num -> b`.
+
+unify a (num -> b)
+
+This unification will examine f, see that it's a variable `a`, and make
+a substitution of all `a`s in the environment to num -> bs. This update
+is only within the scope of f, not above it (e.g. there could be some earlier
+type `a` instantiated somewhere, and we don't want to set that)
+
+
+What if the input was \f -> \g -> f (g 2)?
+
+We push f on the stack with `a`, and g with `b`:
+[{g: b}, {f: a}]
+we determine g is `num -> c` by the above process
+then we make a new type variable `d` which this returns, and
+say that `f : c -> d`
 
 -}
 mkSubs :: TypeMap -> Type -> Type
@@ -101,7 +131,8 @@ infer expr = case expr of
     maybeType <- lookup name
     case maybeType of
       Nothing -> error $ "Undefined variable '" ++ name ++ "'"
-      Just (Polytype vars typ) -> do
+      Just (Polytype vars
+       typ) -> do
         -- get a new variable for each of these
         newVars <- mapM newVar vars
         -- make all of the substitutions in the type
