@@ -5,7 +5,7 @@ module AlgorithmW  (  Expr(..),
 
 import qualified Data.Map as M
 import qualified Data.Set as S
-
+import Prelude hiding (lookup)
 import Control.Monad.Error
 import Control.Monad.Reader
 import Control.Monad.State
@@ -51,7 +51,7 @@ instance Types Scheme where
 
 instance Types a => Types [a] where
   applySub s = map (applySub s)
-  free l = foldr (∪) (∅) (map free l)
+  free l = foldr (∪) (∅) (free <$> l)
 
 type Substitutions = M.Map String Type
 
@@ -63,19 +63,24 @@ composeSubs s1 s2 = (applySub s1 <$> s2) `M.union` s1
 
 newtype TypeEnv = TypeEnv (M.Map String Scheme)
 
-remove :: TypeEnv -> Name -> TypeEnv
-remove (TypeEnv env) var = TypeEnv (M.delete var env)
+remove :: Name -> TypeEnv -> TypeEnv
+remove  var (TypeEnv env) = TypeEnv (M.delete var env)
+
+teUnion :: TypeEnv -> TypeEnv -> TypeEnv
+teUnion (TypeEnv te1) (TypeEnv te2) = TypeEnv $ te1 `M.union` te2
+
+singleEnv :: Name -> Scheme -> TypeEnv
+singleEnv n s = TypeEnv $ M.singleton n s
 
 instance Types TypeEnv where
   free (TypeEnv env) = free (M.elems env)
   applySub s (TypeEnv env) = TypeEnv (applySub s <$> env)
 
-generalize :: TypeEnv -> Type -> Scheme
-generalize env t = Scheme vars t
-  where vars = S.toList (free t `S.difference` free env)
-
-
-data InferrerEnv = InferrerEnv (M.Map String Type)
+generalize :: Type -> Inferrer Scheme
+generalize t = do
+  env <- namesToSchemes <$> get
+  let vars = S.toList (free t `S.difference` free env)
+  return $ Scheme vars t
 
 data InferrerState =
   InferrerState {
@@ -85,23 +90,18 @@ data InferrerState =
     namesToSchemes :: TypeEnv
   }
 
-
-
-type Inferrer a =
-  ErrorT String (ReaderT InferrerEnv (StateT InferrerState IO)) a
+type Inferrer = ErrorT String (StateT InferrerState IO)
 
 runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
-runInferrer t =
-    runStateT (runReaderT (runErrorT t) initInferrerEnv) initInferrerState
-  where initInferrerEnv = InferrerEnv M.empty
-        initInferrerState = InferrerState {
-                              inferSupply = 0,
-                              inferSubstitutions = noSubstitutions,
-                              namesToTypes = M.empty,
-                              namesToSchemes = TypeEnv M.empty
-                            }
+runInferrer t = runStateT (runErrorT t) initial
+  where initial = InferrerState {
+                    inferSupply = 0,
+                    inferSubstitutions = noSubstitutions,
+                    namesToTypes = M.empty,
+                    namesToSchemes = TypeEnv M.empty
+                  }
 
--- | Get a fresh new type variable to use
+-- | Get a fresh new type variable to use starting with the given prefix
 newTypeVar :: String -> Inferrer Type
 newTypeVar prefix = do
   -- get the current state
@@ -137,42 +137,59 @@ a `unify` b = case (a,b) of
                   throwError $ "occur check fails: " ++ u ++ ", " ++ show t
                 | otherwise = return (M.singleton u t)
 
-infer :: TypeEnv -> Expr -> Inferrer (Substitutions, Type)
-infer env@(TypeEnv e) expr = case expr of
+updateEnv :: (TypeEnv -> TypeEnv) -> Inferrer TypeEnv
+updateEnv f = do
+  state <- get
+  let newEnv = f $ namesToSchemes state
+  put state {namesToSchemes = newEnv}
+  return newEnv
+
+teLookup :: Name -> TypeEnv -> Maybe Scheme
+teLookup name (TypeEnv env) = M.lookup name env
+
+infer :: Expr -> Inferrer (Substitutions, Type)
+infer expr = case expr of
   -- symbols are same as variables in this context
-  Symbol s -> infer env (Var s)
-  Var n -> case M.lookup n e of
-    Nothing -> throwError $ "unbound variable: " ++ n
-    Just sigma -> do
-      t <- instantiate sigma
-      return (noSubstitutions, t)
+  Symbol s -> infer $ Var s
+  -- If we encounter a variable, we need to look it up
+  Var name -> do
+    schemes <- namesToSchemes <$> get
+    case teLookup name schemes of
+      Nothing -> throwError $ "unbound variable: " ++ name
+      Just σ -> do
+        -- we need to instantiate a new type variable
+        t <- instantiate σ
+        return (noSubstitutions, t)
   String _ -> return (noSubstitutions, StringType)
   Number _ -> return (noSubstitutions, NumberType)
-  Lambda n e -> do
-    tv <- newTypeVar "a"
-    let TypeEnv env' = remove env n
-        env'' = TypeEnv (env' `M.union` M.singleton n (Scheme [] tv))
-    (s1, t1) <- infer env'' e
-    return (s1, applySub s1 tv :=> t1)
-  Apply e1 e2 -> do
-    tv <- newTypeVar "a"
-    (s1, t1) <- infer env e1
-    (s2, t2) <- infer (applySub s1 env) e2
-    s3 <- unify (applySub s2 t1) (t2 :=> tv)
-    return (s3 `composeSubs` s2 `composeSubs` s1, applySub s3 tv)
-  Let x e1 e2 -> do
-    (s1, t1) <- infer env e1
-    let TypeEnv env' = remove env x
-        t' = generalize (applySub s1 env) t1
-        env'' = TypeEnv (M.insert x t' env')
-    case e2 of
-      Nothing -> return (s1, TupleType [])
-      Just e2 -> do
-        (s2, t2) <- infer (applySub s1 env'') e2
-        return (s1 `composeSubs` s2, t2)
+  Lambda varName e -> do
+    newT <- newTypeVar "a"
+    -- remove this variable name from the scheme mapping, and union the
+    -- mapping with {varName => (Scheme [] newT)}
+    updateEnv $ teUnion (singleEnv varName (Scheme [] newT)) . remove varName
+    (s1, t1) <- infer e
+    return (s1, applySub s1 newT :=> t1)
+  Apply func arg -> do
+    newT <- newTypeVar "a"
+    (argS, argT) <- infer arg
+    updateEnv (applySub argS)
+    (funcS, funcT) <- infer func
+    resS <- unify (applySub funcS argT) (funcT :=> newT)
+    return (resS `composeSubs` funcS `composeSubs` argS,
+            applySub resS newT)
+  Let x body next -> do
+    (bodySubs, bodyT) <- infer body
+    updateEnv (applySub bodySubs . remove x)
+    t' <- generalize bodyT
+    updateEnv (\(TypeEnv env) -> TypeEnv $ M.insert x t' env)
+    case next of
+      Nothing -> return (bodySubs, TupleType [])
+      Just expr -> do
+        (nextSubs, nextType) <- infer expr
+        return (bodySubs `composeSubs` nextSubs, nextType)
 
-typeInference :: M.Map Name Scheme -> Expr -> Inferrer Type
-typeInference env e = uncurry applySub <$> infer (TypeEnv env) e
+typeInference :: Expr -> Inferrer Type
+typeInference e = uncurry applySub <$> infer e
 
 {- TESTING... -}
 
@@ -187,7 +204,7 @@ e5 = grab "\\m -> let y = m; let x = y \"hello\"; x;"
 testInfer :: (Int, Expr) -> IO ()
 testInfer (i, e) = do
   putStrLn $ "Test " ++ show i ++ " '" ++ show e ++ "'"
-  (res, _) <- runInferrer (typeInference M.empty e)
+  (res, _) <- runInferrer $ typeInference e
   case res of
     Left err -> putStrLn $ "error: " ++ err
     Right t  -> putStrLn $ show e ++ " : " ++ show t ++ "\n"
