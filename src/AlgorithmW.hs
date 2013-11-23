@@ -1,7 +1,8 @@
-module AlgorithmW  (  Expr(..),
-                      Type(..),
-                      infer
-                   ) where
+module HM  (  Expr(..),
+              Type(..),
+              infer,
+              test
+           ) where
 
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -11,10 +12,12 @@ import Control.Monad.Reader
 import Control.Monad.State
 import qualified Text.PrettyPrint as PP
 import Control.Applicative ((<$>))
+import Data.List (intercalate)
 import Parser
 
 data Type =
   TVar String
+  | BoolType
   | NumberType
   | StringType
   | TupleType [Type]
@@ -22,7 +25,7 @@ data Type =
   | Type :=> Type
   deriving (Eq, Ord)
 
-data Scheme = Scheme [String] Type
+data Polytype = Polytype [String] Type
 
 class Types a where
   free :: a -> S.Set String
@@ -43,11 +46,11 @@ instance Types Type where
   applySub s (t1 :=> t2) = applySub s t1 :=> applySub s t2
   applySub s t = t
 
-instance Types Scheme where
-  free (Scheme vars t) =
+instance Types Polytype where
+  free (Polytype vars t) =
     (free t) `S.difference` (S.fromList vars)
-  applySub s (Scheme vars t) =
-    Scheme vars (applySub (foldr M.delete s vars) t)
+  applySub s (Polytype vars t) =
+    Polytype vars (applySub (foldr M.delete s vars) t)
 
 instance Types a => Types [a] where
   applySub s = map (applySub s)
@@ -58,10 +61,16 @@ type Substitutions = M.Map String Type
 noSubstitutions :: Substitutions
 noSubstitutions = M.empty
 
-composeSubs :: Substitutions -> Substitutions -> Substitutions
-composeSubs s1 s2 = (applySub s1 <$> s2) `M.union` s1
+(=>=) :: Substitutions -> Substitutions -> Substitutions
+s1 =>= s2 = (applySub s1 <$> s2) `M.union` s1
 
-newtype TypeEnv = TypeEnv (M.Map String Scheme)
+newtype TypeEnv = TypeEnv (M.Map String Polytype)
+
+instance Show TypeEnv where
+  show (TypeEnv env) = let
+    pairs = M.toList env
+    toS (key, val) = show key ++ " => " ++ show val
+    in "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
 
 remove :: TypeEnv -> Name -> TypeEnv
 remove (TypeEnv env) var = TypeEnv (M.delete var env)
@@ -70,8 +79,8 @@ instance Types TypeEnv where
   free (TypeEnv env) = free (M.elems env)
   applySub s (TypeEnv env) = TypeEnv (applySub s <$> env)
 
-generalize :: TypeEnv -> Type -> Scheme
-generalize env t = Scheme vars t
+generalize :: TypeEnv -> Type -> Polytype
+generalize env t = Polytype vars t
   where vars = S.toList (free t `S.difference` free env)
 
 
@@ -82,7 +91,7 @@ data InferrerState =
     inferSupply :: Int,
     inferSubstitutions :: Substitutions,
     namesToTypes :: M.Map Name Type,
-    namesToSchemes :: TypeEnv
+    namesToPolytypes :: TypeEnv
   }
 
 
@@ -98,7 +107,7 @@ runInferrer t =
                               inferSupply = 0,
                               inferSubstitutions = noSubstitutions,
                               namesToTypes = M.empty,
-                              namesToSchemes = TypeEnv M.empty
+                              namesToPolytypes = TypeEnv M.empty
                             }
 
 -- | Get a fresh new type variable to use
@@ -111,8 +120,8 @@ newTypeVar prefix = do
   -- wrap it in a type variable and return it
   return $ TVar $ prefix ++ show (inferSupply s)
 
-instantiate :: Scheme -> Inferrer Type
-instantiate (Scheme vars t) = do
+instantiate :: Polytype -> Inferrer Type
+instantiate s@(Polytype vars t) = do
   newVars <- mapM (\_ -> newTypeVar "a") vars
   -- make a substitution mapping all of the variables in the scheme
   -- to new variables we just generated
@@ -120,59 +129,80 @@ instantiate (Scheme vars t) = do
   return $ applySub s t
 
 unify :: Type -> Type -> Inferrer Substitutions
-a `unify` b = case (a,b) of
-  (l :=> r, l' :=> r') -> do
-    s1 <- l `unify` l'
-    s2 <- applySub s1 r `unify` applySub s1 r'
-    return (s1 `composeSubs` s2)
-  (TVar u, t) -> u `bind` t
-  (t, TVar u) -> u `bind` t
-  (NumberType, NumberType) -> return noSubstitutions
-  (StringType, StringType) -> return noSubstitutions
-  (t1, t2) -> throwError $ "types do not unify: " ++ show t1 ++ ", " ++ show t2
+a `unify` b = do
+  case (a,b) of
+    (l :=> r, l' :=> r') -> do
+      s1 <- l `unify` l'
+      s2 <- applySub s1 r `unify` applySub s1 r'
+      return (s1 =>= s2)
+    (TVar u, t) -> u `bind` t
+    (t, TVar u) -> u `bind` t
+    (NumberType, NumberType) -> return noSubstitutions
+    (StringType, StringType) -> return noSubstitutions
+    (t1, t2) -> throwError $ "types do not unify: " ++ show t1 ++ ", " ++ show t2
   where
-    bind :: String -> Type -> Inferrer Substitutions
-    bind u t | t == TVar u = return noSubstitutions
-                | u `S.member` free t =
-                  throwError $ "occur check fails: " ++ u ++ ", " ++ show t
-                | otherwise = return (M.singleton u t)
+    bind :: Name -> Type -> Inferrer Substitutions
+    bind name typ | typ == TVar name = return noSubstitutions
+                  | name `S.member` free typ = throwError $
+                      "Error: " ++ name ++ " occurs free in type " ++ show typ
+                  | otherwise = do
+                    return (M.singleton name typ)
 
 infer :: TypeEnv -> Expr -> Inferrer (Substitutions, Type)
-infer env@(TypeEnv e) expr = case expr of
+infer env@(TypeEnv tenv) expr = case expr of
+  String _ -> noSubs StringType
+  Number _ -> noSubs NumberType
+  Bool _ -> noSubs BoolType
   -- symbols are same as variables in this context
   Symbol s -> infer env (Var s)
-  Var n -> case M.lookup n e of
-    Nothing -> throwError $ "unbound variable: " ++ n
-    Just sigma -> do
-      t <- instantiate sigma
-      return (noSubstitutions, t)
-  String _ -> return (noSubstitutions, StringType)
-  Number _ -> return (noSubstitutions, NumberType)
-  Lambda n e -> do
-    tv <- newTypeVar "a"
-    let TypeEnv env' = remove env n
-        env'' = TypeEnv (env' `M.union` M.singleton n (Scheme [] tv))
-    (s1, t1) <- infer env'' e
-    return (s1, applySub s1 tv :=> t1)
+  Var n -> case M.lookup n tenv of
+    Nothing -> throwError $ "Unknown variable: " ++ n
+    Just sigma -> noSubs =<< instantiate sigma
+  Lambda param body -> do
+    paramT <- newTypeVar "a"
+    -- set the param variable to point to this new type
+    let env' = TypeEnv $ M.insert param (Polytype [] paramT) tenv
+    -- infer the body of the function with this new environment
+    (subs, returnT) <- infer env' body
+    return (subs, applySub subs paramT :=> returnT)
   Apply e1 e2 -> do
     tv <- newTypeVar "a"
     (s1, t1) <- infer env e1
     (s2, t2) <- infer (applySub s1 env) e2
     s3 <- unify (applySub s2 t1) (t2 :=> tv)
-    return (s3 `composeSubs` s2 `composeSubs` s1, applySub s3 tv)
-  Let x e1 e2 -> do
-    (s1, t1) <- infer env e1
-    let TypeEnv env' = remove env x
-        t' = generalize (applySub s1 env) t1
-        env'' = TypeEnv (M.insert x t' env')
-    case e2 of
-      Nothing -> return (s1, TupleType [])
-      Just e2 -> do
-        (s2, t2) <- infer (applySub s1 env'') e2
-        return (s1 `composeSubs` s2, t2)
+    return (s3 =>= s2 =>= s1, applySub s3 tv)
+  Let var expr next -> do
+    (exprSubs, exprT) <- infer env expr
+    -- remove any existing association this variable has
+    let TypeEnv env' = remove env var
+    -- get the variable
+        varT = generalize (applySub exprSubs env) exprT
+        env'' = TypeEnv (M.insert var varT env')
+    case next of
+      Nothing -> return (exprSubs, TupleType [])
+      Just next -> do
+        -- apply whatever substitutions were produced from evaluating `expr`,
+        -- infer the next guy, and compose their substitutions
+        (nextSubs, nextT) <- infer (applySub exprSubs env'') next
+        return (exprSubs =>= nextSubs, nextT)
+  If c t f -> do
+    (s1, condT) <- infer env c
+    (s2, trueT) <- infer (applySub s1 env) t
+    (s3, falseT) <- infer (applySub (s1 =>= s2) env) f
+    s4 <- unify trueT falseT
+    return (s1 =>= s2 =>= s3 =>= s4, falseT)
 
-typeInference :: M.Map Name Scheme -> Expr -> Inferrer Type
+  where noSubs t = return (noSubstitutions, t)
+
+typeInference :: M.Map Name Polytype -> Expr -> Inferrer Type
 typeInference env e = uncurry applySub <$> infer (TypeEnv env) e
+
+test s = do
+  let e = grab s
+  (res, _) <- runInferrer (typeInference M.empty e)
+  case res of
+    Left err -> putStrLn $ "error: " ++ err ++ "\n"
+    Right t  -> putStrLn $ "Expr: " ++ prettyExpr e ++ "\nType: " ++ show t ++ "\n\n"
 
 {- TESTING... -}
 
@@ -186,11 +216,13 @@ e5 = grab "\\m -> let y = m; let x = y \"hello\"; x;"
 
 testInfer :: (Int, Expr) -> IO ()
 testInfer (i, e) = do
-  putStrLn $ "Test " ++ show i ++ " '" ++ show e ++ "'"
+  putStrLn $ "Test " ++ show i ++ ":\n\t'" ++ prettyExpr e ++ "'\n"
   (res, _) <- runInferrer (typeInference M.empty e)
   case res of
-    Left err -> putStrLn $ "error: " ++ err
-    Right t  -> putStrLn $ show e ++ " : " ++ show t ++ "\n"
+    Left err -> putStrLn $ "error: " ++ err ++ "\n"
+    Right t  -> putStrLn $ prettyExpr e ++ " : " ++ show t ++ "\n\n"
+
+testIt = main
 
 main :: IO ()
 main = mapM_ testInfer $ zip [0..] [e0, e1, e2, e3, e4, e5]
@@ -201,7 +233,7 @@ instance Show Type where
 
 prType :: Type -> PP.Doc
 prType (TVar n) = PP.text n
-prType NumberType = PP.text "Int"
+prType NumberType = PP.text "Number"
 prType StringType = PP.text "Bool"
 prType (t :=> s) = prParenType t PP.<+> PP.text "->" PP.<+> prType s
 
@@ -210,14 +242,16 @@ prParenType t = case t of
                       _ :=> _ -> PP.parens (prType t)
                       _ -> prType t
 
-instance Show Scheme where
-  showsPrec _ x = shows (prScheme x)
+instance Show Polytype where
+  showsPrec _ x = shows (prPolytype x)
 
-prScheme :: Scheme -> PP.Doc
-prScheme (Scheme vars t) = PP.text "All" PP.<+>
-                              PP.hcat
-                                (PP.punctuate PP.comma (map PP.text vars))
-                              PP.<> PP.text "." PP.<+> prType t
+prPolytype :: Polytype -> PP.Doc
+prPolytype (Polytype vars t) = case vars of
+  [] -> prType t
+  _  -> PP.text "∀" PP.<+>
+          PP.hcat
+            (PP.punctuate PP.comma (map PP.text vars))
+            PP.<> PP.text "." PP.<+> prType t
 
 
 test' :: Expr -> IO ()
@@ -225,11 +259,11 @@ test' e = do
   (res, _) <- runInferrer (bu S.empty e)
   case res of
     Left err -> putStrLn $ "error: " ++ err
-    Right t  -> putStrLn $ show e ++ " :: " ++ show t
+    Right t  -> putStrLn $ prettyExpr e ++ " :: " ++ show t
 
 data Constraint =
   CEquivalent Type Type
-  | CExprlicitInstance Type Scheme
+  | CExprlicitInstance Type Polytype
   | CImplicitInstance Type (S.Set String) Type
 
 instance Show Constraint where
@@ -238,7 +272,7 @@ instance Show Constraint where
 prConstraint :: Constraint -> PP.Doc
 prConstraint (CEquivalent t1 t2) = PP.hsep [prType t1, PP.text "=", prType t2]
 prConstraint (CExprlicitInstance t s) =
-    PP.hsep [prType t, PP.text "<~", prScheme s]
+    PP.hsep [prType t, PP.text "<~", prPolytype s]
 prConstraint (CImplicitInstance t1 m t2) = PP.hsep [prType t1,
               PP.text "<=" PP.<>
                 PP.parens
@@ -246,10 +280,11 @@ prConstraint (CImplicitInstance t1 m t2) = PP.hsep [prType t1,
                     (PP.punctuate PP.comma (map PP.text (S.toList m)))),
              prType t2]
 
-type Assum = [(String, Type)]
+type Assumptions = [(String, Type)]
 type CSet = [Constraint]
 
-bu :: S.Set String -> Expr -> Inferrer (Assum, CSet, Type)
+bu :: S.Set String -> Expr -> Inferrer (Assumptions, CSet, Type)
+bu m (Symbol s) = bu m (Var s)
 bu m (Var n) = do
   b <- newTypeVar "b"
   return ([(n, b)], [], b)

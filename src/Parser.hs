@@ -1,4 +1,4 @@
-module Parser (grab, Expr(..), Name) where
+module Parser (grab, Expr(..), Name, prettyExpr) where
 
 import Text.ParserCombinators.Parsec
 import Data.List
@@ -50,9 +50,9 @@ prettyExpr e = case e of
   Var v -> v
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++ prettyExpr t ++ " else " ++ prettyExpr f
-  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ (case e2 of
-    Nothing -> "; "
-    Just e2 -> prettyExpr e2 ++ "; ")
+  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
+    Nothing -> ""
+    Just e2 -> prettyExpr e2)
   Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
   Dotted a b -> prettyExpr a ++ "." ++ prettyExpr b
   Comma a b -> prettyExpr a ++ ", " ++ prettyExpr b
