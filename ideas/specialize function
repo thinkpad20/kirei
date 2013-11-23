@@ -1,0 +1,20 @@
+specialize function
+
+update :: Name -> Type -> Inferrer Type
+update name t = do
+  (tmaps, used) <- get
+  put (fmap (fix name t) tmaps, unsetName name used)
+  return t
+
+(=>=) :: Type -> Type -> Inferrer Type
+TypeVar a =>= t = update a t
+(t1 :=> t2) =>= (t3 :=> t4) = do
+  t1' <- t1 =>= t3
+  t2' <- t2 =>= t4
+  return $ t1' =>= t2'
+TupleType as =>= TupleType bs =
+  -- this won't type match, need to thinking about it
+  return $ TupleType $ uncurry (=>=) $ zip as bs
+NamedTuple n as =>= NamedTuple m bs | n == m =
+  return $ NamedTuple n $ uncurry (=>=) $ zip as bs
+

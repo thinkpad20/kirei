@@ -1,5 +1,4 @@
--- Compiles Kirei to JavaScript. Will eventually be a REPL as well.
-
+-- Command-line utility to compile Kirei to JavaScript.
 module Main where
 
 import System.Environment (getArgs)

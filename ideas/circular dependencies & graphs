@@ -1,0 +1,39 @@
+let x = 1 :: y,
+    y = 0 :: x;
+
+printLn (take 5 x) $IO;
+
+// need to look at *dependency graph* for variables,
+// to let this happen
+
+dependencies:
+
+x -> y -> x
+
+If circular dependencies, replace instances of depending variables
+with `tmp`s:
+
+var tmp;
+var x = ["Cons", 1, tmp];
+var y = ["Cons", 0, tmp];
+
+Then make the assignments
+x[2] = y;
+y[2] = x;
+
+var tmp;
+var x = Cons(1)(tmp);
+var y = Cons(0)(tmp);
+x[2] = y;
+y[2] = x;
+
+printLn(take(5)(x))($IO);
+
+
+In general, being able to handle dependency graphs will enable us to do strict
+evaluation while letting us define variables in any order we want.
+
+let foo a b = bar a * baz b where
+  bar x = fizzy $ floop x 4 and
+  baz y = y^2 ! gorblegoo;
+  fizzy p = p ^ 2 ^ 3 ^ 4;
