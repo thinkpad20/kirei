@@ -212,15 +212,25 @@ datatype List a =
   Empty
 | Cons a (List a);
 
-let reverse list = 
+let reverse list =
   let loop list2 accumulator = case list2 of
     Empty -> accumulator
   | Cons a as -> loop as (Cons a accumulator);
   loop list Empty;
-  
+
 let foo = [1..6];
 let bar = [5,4,3,2,1];
 assert foo == bar;
+```
+
+We have two forms of string interpolation. Using `#{ }` inside of a string will call `show` on whatever is inside the curly braces, while using `#[ ]` will put the result in verbatim (it must be a string).
+
+```haskell
+let name = "Allen";
+let age = 28;
+let intro1 = "Hi, my name is #[name] and I'm #{age} years old.";
+let intro2 = "Hi, my name is " ++ name ++ " and I'm " ++ show age ++ " years old.";
+assert intro1 == intro2;
 ```
 
 And that's about it. Of course, future syntax will be introduced for type signatures, more syntactic sugar, and a bit more. But that's close to everything.
@@ -332,14 +342,15 @@ Yay! Note that when writing a `\` in GHCi you need to write it with two backslas
 
 A lot!
 
-* no operator precedences, user-defined or otherwise. This includes "operator whitespace" (a.k.a. juxtaposition). Use parentheses to disambiguate.
+* All symbolic operators are currently right-associative, which makes some things require parenthesis where they shouldn't. We currently lack the ability to specify these.
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
 * No arrays or any builtin data structures (linked lists and maps are especially important)
   - We do have tuples now, woo hoo!
-  - And now we have ADTs too! Although they need a little more work.
+  - And now we have ADTs too, which means Lists! Although they need a little more work. We have a basic non-balanced BST now.
 * No type system yet (we plan to implement Hindley-Milner, or a modified version thereof)
+  - We have some a basic implementation of HM up and running, although it do much more than the pure lambda calculus yet. Working on it; it's tougher than it looks.
+  - The postulated token system should be really just predicated on the type system, with a few small extensions
+  - Type classes will also depend on this
 * No TCO or any other optimizations
-* Token system hasn't been implemented yet
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
-* We'd like to support anonymous recursion, so that we can write recursion into lambda functions without names
 * modules, namespaces, imports, etc...
