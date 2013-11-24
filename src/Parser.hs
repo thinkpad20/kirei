@@ -3,6 +3,8 @@ module Parser {-(grab, test, Expr(..))-} where
 import Text.ParserCombinators.Parsec
 import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
+import Data.Monoid
+import Debug.Trace
 
 type Name = String
 type Matches = [(Expr, Expr)]
@@ -30,6 +32,7 @@ data Expr =
   | Case Expr Matches
   | Tuple [Expr]
   | Lambda Name Expr
+  | ExtendedLambda Matches (Maybe Expr)
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
   deriving (Show)
@@ -39,13 +42,70 @@ data ListLiteral =
   | ListRange Expr Expr
   deriving (Show)
 
+data InString =
+  Plain String
+  | InterShow InString Expr InString
+  | Interpolate InString Expr InString
+
+instance Show InString where
+  show (Plain s) = show s
+  show (InterShow s e s') = show s ++ " ++ show (" ++ show e ++ ") ++ " ++ show s'
+  show (Interpolate s e s') = show s ++ " ++ (" ++ show e ++ ") ++ " ++ show s'
+
+-- | Compiles an interpolated string into an expression via concatenations
+isToExpr :: InString -> Expr
+isToExpr (Plain s) = String s
+isToExpr (InterShow s1 e s2) = case (s1, s2) of
+  (Plain "", Plain "") -> sh e
+  (is, Plain "") -> Apply (pp $ isToExpr is) (sh e)
+  (Plain "", is) -> Apply (pp $ sh e) (isToExpr is)
+  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp $ sh e) (isToExpr is2))
+  where sh = Apply (Var "show")
+        pp = Apply (Symbol "++")
+isToExpr (Interpolate s1 e s2) = case (s1, s2) of
+  (Plain "", Plain "") -> sh e
+  (is, Plain "") -> Apply (pp $ isToExpr is) e
+  (Plain "", is) -> Apply (pp e) (isToExpr is)
+  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp e) (isToExpr is2))
+  where sh = Apply (Var "show")
+        pp = Apply (Symbol "++")
+
+pInString :: Parser InString
+pInString = do
+  first@(Plain s) <- Plain <$> (many $ noneOf "#")
+  case s of
+    "" -> return first
+    _ -> choice [
+            try $ pShowExpr $ InterShow first,
+            try $ pLiteralExpr $ Interpolate first,
+            join first <$> (pure prepend <*> char '#' <*> pInString),
+            return first
+          ]
+  where
+    pShowExpr f = f <$> (sstring "#{" *> pExpr) <*> (char '}' *> pInString)
+    pLiteralExpr f = f <$> (sstring "#[" *> pExpr) <*> (char ']' *> pInString)
+    -- prepends a character onto an InString
+    prepend c (Plain s) = Plain (c : s)
+    prepend c (Interpolate s e s') = Interpolate (prepend c s) e s'
+    prepend c (InterShow s e s') = InterShow (prepend c s) e s'
+    -- joins a Plain instring onto another instring
+    join (Plain s) (Plain s') = Plain (s ++ s')
+    join is1 (InterShow s' e s'') = InterShow (join is1 s') e s''
+    join is1 (Interpolate s' e s'') = Interpolate (join is1 s') e s''
+
+pPlain :: Parser InString
+pPlain = Plain <$> (anyChar `manyTill` try end) where
+  end = string "#{" <|> string "#[" <|> (eof >> return "")
+
 skip :: Parser ()
-skip = spaces *> (lineComment <|> spaces) where
+skip = spaces *> (blockCom <|> lineComment <|> spaces) where
   lineComment = do
     char '#'
     many $ noneOf "\n"
     newline <|> (eof >> return ' ')
     return ()
+  blockCom = string "/*" >> manyTill anyChar (try $ string "*/") >> return ()
+
 
 precedences = [
                 ["!", "$"], -- lowest precedence
@@ -71,8 +131,10 @@ lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
 
+symChars = "><=+-*/^~!%@&$:λ."
+
 symbolChars :: Parser Char
-symbolChars = oneOf "><=+-*/^~!%@&$:λ."
+symbolChars = oneOf symChars
 
 getSym :: String -> Parser String
 getSym s = try $ do
@@ -213,16 +275,61 @@ pLambda = do
     lambda [] e = e
     lambda (v:vs) e = Lambda v (lambda vs e)
 
+-- | Extended let - handles a more general case which gets compiled down into
+-- a regular set statement down the line
+pExtendedLet :: Parser Expr
+pExtendedLet = do
+  keyword "let"
+  matches <- sepBy1 getPattern (keysim "|")
+  keysim ";"
+  next <- optionMaybe pExprs
+  case matches of
+    -- with a single solitary pattern, we don't need a case
+    -- statement, just its arguments, name and body
+    [p] -> do
+      let (name, args, body) = (getName p, getArgs $ fst p, getBody p)
+      return $ Let name (f args body) next
+    ps -> do
+      let matches = zip (getLeft <$> ps) (getRight <$> ps)
+          name :: Name
+          name = getName $ head ps
+          arg = "__arg"
+          allSame = and $ map (== name) (getName <$> tail ps)
+      if allSame then
+        return $ Let name (Lambda arg $ Case (Var arg) matches) next
+        else error $ "Some patterns don't conform"
+  where
+    getPattern = pure (,) <*> pExpr <* keysim "=" <*> pExprs
+    -- gets the name of the function out of a pattern
+    getName (Var n, _) = n
+    getName (Symbol s, _) = s
+    getName (Apply a b, e) = getName (a, e)
+    getName p = error $ "Invalid pattern: " ++ show p
+    getArgs (Var n) = []
+    getArgs (Symbol s) = []
+    getArgs (Apply a b) = getArgs a ++ getArgs b
+    --getArgs (Tuple es) = getArgs <$> es
+    getBody = undefined
+    getLeft = undefined
+    getRight = undefined
+    f [] e = e
+    f (a:as) e = Lambda a (f as e)
+
+-- Kinda hacky, needs to be fixed
 pLet :: Parser Expr
 pLet = do
   keyword "let"
-  fname <- pVariable
-  args <- many pVariable
+  pattern <- pExpr
   keysim "="
-  expr <- pExprs
+  body <- pExprs
   keysim ";"
   next <- optionMaybe pExprs
-  return $ Let fname (f args expr) next where
+  return $ Let (head $ args pattern) (f (tail $ args pattern) body) next where
+    args p = case p of
+      Var v -> [v]
+      Symbol s -> [s]
+      Apply a b -> args a ++ args b
+      _ -> error $ "Illegal pattern " ++ show p
     f [] e = e
     f (a:as) e = Lambda a (f as e)
 
