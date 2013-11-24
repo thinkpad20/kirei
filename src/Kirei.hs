@@ -8,6 +8,7 @@ import Data.List (intercalate)
 import Data.List.Split (splitOn)
 import Control.Monad
 import Control.Applicative ((<$>))
+import Common
 
 usage = "Usage: kirei <input filename(s)> [output filename]"
 preamble = reqStd ++ imprts ++ "\n" where

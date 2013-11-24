@@ -1,4 +1,4 @@
-module CompileJS where
+module CompileJS (toJs, renderJS, ppJS) where
 
 import qualified JavaScript.AST as J
 import Parser
@@ -10,11 +10,7 @@ import Control.Applicative
 import Debug.Trace
 import Data.Char
 import Data.List
-
-(~>) = flip (.)
-infixr 9 ~>
-
-(!) = flip ($)
+import Common
 
 -- Exporting functions
 toJs :: String -> J.Block
@@ -23,11 +19,8 @@ toJs = grab ~> compile
 renderJS :: String -> String
 renderJS = toJs ~> J.render 0
 
-prettyPrintJS :: String -> IO ()
-prettyPrintJS = renderJS ~> putStrLn
-ppJS = prettyPrintJS
-
-testBAS name = grab ~> boolAndAssigns name
+ppJS :: String -> IO ()
+ppJS = renderJS ~> putStrLn
 
 single e = J.Block [e]
 
@@ -171,7 +164,7 @@ compile expr = case expr of
 runTest :: IO ()
 runTest = do
   src <- readFile "../lib/first.kr"
-  prettyPrintJS src
+  ppJS src
 
 -- Utility functions
 

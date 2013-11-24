@@ -5,6 +5,7 @@ import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
 import Data.Monoid
 import Debug.Trace
+import Common
 
 type Name = String
 type Matches = [(Expr, Expr)]
@@ -73,14 +74,12 @@ isToExpr (Interpolate s1 e s2) = case (s1, s2) of
 pInString :: Parser InString
 pInString = do
   first@(Plain s) <- Plain <$> (many $ noneOf "#")
-  case s of
-    "" -> return first
-    _ -> choice [
-            try $ pShowExpr $ InterShow first,
-            try $ pLiteralExpr $ Interpolate first,
-            join first <$> (pure prepend <*> char '#' <*> pInString),
-            return first
-          ]
+  choice [
+          try $ pShowExpr $ InterShow first,
+          try $ pLiteralExpr $ Interpolate first,
+          join first <$> (pure prepend <*> char '#' <*> pInString),
+          return first
+        ]
   where
     pShowExpr f = f <$> (sstring "#{" *> pExpr) <*> (char '}' *> pInString)
     pLiteralExpr f = f <$> (sstring "#[" *> pExpr) <*> (char ']' *> pInString)
@@ -166,8 +165,13 @@ pDouble = lexeme $ do
     ds' <- many1 digit
     return $ read (ds ++ "." ++ ds')
 
-pString :: Parser String
-pString = lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
+pString :: Parser Expr
+pString = do
+  raw <- lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
+  let parsed = parse pInString "Interpolated string" raw
+  case parsed of
+    Left err -> error $ show err
+    Right instring -> instring ! isToExpr ! return
 
 pVariable :: Parser String
 pVariable = checkParse $ (:) <$> first <*> rest where
@@ -220,7 +224,7 @@ pVariableOrUnderscore = do
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
                  Number <$> pDouble,
-                 String <$> pString,
+                 pString,
                  pVariableOrUnderscore,
                  pParens,
                  pLambda,
@@ -347,3 +351,4 @@ grab s = case parse (skip *> pExprs
   Left err -> error $ show err
 
 test parser = parse (skip *> parser <* eof) ""
+
