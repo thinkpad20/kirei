@@ -90,18 +90,6 @@ newVar = give "a" where
   next name = let (c:cs) = reverse name in
     reverse (if c < 'z' then succ c : cs else 'a' : c : cs)
 
-{-
-\x -> x + 1
-{x: a}
-+ x -> unify (num->num->num, a -> b)
-a => num, b => num->num
-(+x) 1 {x:num}
-infer 1 -> num
-infer (+x) -> (num->num)
-newVar -> a
-
--}
-
 infer :: Expr -> Inferrer Type
 infer expr = case expr of
   Number _ -> pure num
@@ -135,6 +123,8 @@ start expr = (runStateT . infer) expr initEnv
 
 test = grab ~> symsToVars ~> start
 
+-- | Convenience function to convert all Symbols into Vars, so that we don't need
+-- to worry about them when type checking (since they're equivalent in that regard)
 symsToVars expr = case expr of
   Symbol s -> Var s
   If c t f -> If (symsToVars c) (symsToVars t) (symsToVars f)
