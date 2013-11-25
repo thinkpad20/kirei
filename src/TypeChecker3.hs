@@ -19,6 +19,8 @@ infixr 4 :=>
 instance Show Type where
   show t = case t of
     TypeVar name -> name
+    -- a named type with no name is just a tuple
+    NamedType "" ts -> "(" ++ (intercalate ", " $ map show ts) ++ ")"
     NamedType name [] -> name
     NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
     t1 :=> t2 -> show' t1 ++ " -> " ++ show t2
