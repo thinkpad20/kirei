@@ -110,24 +110,16 @@ infer expr = case expr of
   Var name -> getVar name
   Apply func arg -> do
     argT <- infer arg
-    prnt $ "Inferred " ++ show arg ++ " as `" ++ show argT ++ "`"
     funcT <- infer func
-    prnt $ "Inferred " ++ show func ++ " as `" ++ show funcT ++ "`"
     returnT <- newVar
-    prnt $ "Made a new var " ++ show returnT
     res <- unify funcT (argT :=> returnT)
-    prnt $ "result was `" ++ show res ++ "`"
     return res
   Lambda name body -> do
     argT@(TypeVar var) <- newVar
-    prnt $ "made a new var `" ++ show argT ++ "`"
     push (TypeMap $ M.singleton name argT) (S.singleton var)
     bodyT <- infer body
-    prnt $ "inferred body to be type `" ++ show bodyT ++ "`"
     argT' <- getVar name
-    prnt $ "determined argument to be type `" ++ show argT' ++ "`"
     pop
-    prnt $ "type of lambda is `" ++ show (argT' :=> bodyT) ++ "`"
     return $ argT' :=> bodyT
   Let name expr expr' -> do
     exprT <- infer expr
@@ -202,17 +194,6 @@ defaults = TypeMap $ M.fromList $
     ("+", num :=> num :=> num)
   ]
 
-
---type Substitutions = M.Map Name Type
---subs1 =>= subs2 = applySubs M.union
-
---applySubs :: Substitutions -> TypeMap -> TypeMap
---applySubs subs tmap = foldr replace tmap (M.toList subs) where
---  replace (name, newT) origT = case origT of
---    TypeVar n | n == name -> newT
---    a :=> b -> replace name newT a :=> replace (name, newT) b
---    NamedType a ts -> NamedType a (replace (name, newT) <$> ts)
---    _ -> origT
 
 type TempSubs = M.Map Name Type
 type Env' = ([TypeMap], UsedNames, [TempSubs])
