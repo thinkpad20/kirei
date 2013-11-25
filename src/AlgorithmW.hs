@@ -15,18 +15,6 @@ import Control.Applicative ((<$>))
 import Data.List (intercalate)
 import Parser
 
-data Type =
-  TVar String
-  | BoolType
-  | NumberType
-  | StringType
-  | TupleType [Type]
-  | NamedType String [Type]
-  | Type :=> Type
-  deriving (Eq, Ord)
-
-data Polytype = Polytype [String] Type
-
 class Types a where
   free :: a -> S.Set String
   applySub :: Substitutions -> a -> a
@@ -63,14 +51,6 @@ noSubstitutions = M.empty
 
 (=>=) :: Substitutions -> Substitutions -> Substitutions
 s1 =>= s2 = (applySub s1 <$> s2) `M.union` s1
-
-newtype TypeEnv = TypeEnv (M.Map String Polytype)
-
-instance Show TypeEnv where
-  show (TypeEnv env) = let
-    pairs = M.toList env
-    toS (key, val) = show key ++ " => " ++ show val
-    in "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
 
 remove :: TypeEnv -> Name -> TypeEnv
 remove (TypeEnv env) var = TypeEnv (M.delete var env)

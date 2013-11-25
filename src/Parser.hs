@@ -1,68 +1,10 @@
-module Parser (grab, Expr(..), Name, prettyExpr) where
+module Parser (grab) where
 
 import Text.ParserCombinators.Parsec
 import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
-
-type Name = String
-type Matches = [(Expr, Expr)]
-
-data TypeName = TypeName Name [TypeName] deriving (Ord, Eq)
-
-(~>) = flip (.)
-infixr 9 ~>
-
-instance Show TypeName where
-  show (TypeName n []) = n
-  show (TypeName n params) = intercalate " " (n: (show <$> params))
-
-data Constructor = Constructor Name [TypeName] deriving (Show, Ord, Eq)
-
-data Expr =
-  Bool Bool
-  | Number Double
-  | String String
-  | Symbol Name
-  | Var Name
-  | Underscore
-  | If Expr Expr Expr
-  | Let Name Expr (Maybe Expr)
-  | Apply Expr Expr
-  | Dotted Expr Expr
-  | Comma Expr Expr
-  | Case Expr Matches
-  | Tuple [Expr]
-  | Lambda Name Expr
-  | List ListLiteral
-  | Datatype Name [Name] [Constructor] (Maybe Expr)
-  deriving (Show, Eq, Ord)
-
-data ListLiteral =
-  ListLiteral [Expr]
-  | ListRange Expr Expr
-  deriving (Show, Eq, Ord)
-
-prettyExpr e = case e of
-  Bool b -> show b
-  Number n -> show n
-  String s -> show s
-  Symbol op -> op
-  Var v -> v
-  Underscore -> "_"
-  If c t f -> "if " ++ prettyExpr c ++ " then " ++ prettyExpr t ++ " else " ++ prettyExpr f
-  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
-    Nothing -> ""
-    Just e2 -> prettyExpr e2)
-  Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
-  Dotted a b -> prettyExpr a ++ "." ++ prettyExpr b
-  Comma a b -> prettyExpr a ++ ", " ++ prettyExpr b
-  Case e matches -> "case " ++ prettyExpr e ++ " of " ++ sh matches where
-    sh = map s ~> intercalate "|"
-    s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
-  Tuple es -> "(" ++ intercalate ", " (prettyExpr <$> es) ++ ")"
-  Lambda n e -> "\\" ++ n ++ " -> " ++ prettyExpr e
-  List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
-  List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++ prettyExpr stop ++ "]"
+import Common
+import AST
 
 skip :: Parser ()
 skip = spaces *> (lineComment <|> spaces) where
@@ -161,12 +103,9 @@ pDatatype :: Parser Expr
 pDatatype = Datatype <$ keyword "datatype" <*> pVariable <*> many pVariable
                      <* keysim "=" <*> pConstructors
                      <* keysim ";" <*> optionMaybe pExprs where
-  pSingleTypeName = TypeName <$> pVariable <*> pure []
-  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
-                              <*> many pSingleTypeName <* schar ')'
   pConstructor = do
     name <- pVariable
-    argumentTypes <- many (pSingleTypeName <|> pComplexTypeName)
+    argumentTypes <- many pType
     return $ Constructor name argumentTypes
   pConstructors = sepBy1 pConstructor (schar '|')
 
@@ -250,6 +189,15 @@ pLet = do
   return $ Let fname (f args expr) next where
     f [] e = e
     f (a:as) e = Lambda a (f as e)
+
+pSig :: Parser Expr
+pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
+           <* keysim ":" <*> pType <* keysim ";"
+
+pType = pSingleTypeName <|> pComplexTypeName where
+  pSingleTypeName = TypeName <$> pVariable <*> pure []
+  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
+                            <*> many pSingleTypeName <* schar ')'
 
 pExpr :: Parser Expr
 pExpr = choice [pIf, pLet, pDatatype, pBinary precedences]
