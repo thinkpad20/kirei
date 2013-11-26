@@ -10,11 +10,9 @@ import Control.Applicative
 import Debug.Trace
 import Data.Char
 import Data.List
+import Common
+import AST
 
-(~>) = flip (.)
-infixr 9 ~>
-
-(!) = flip ($)
 
 -- Exporting functions
 toJs :: String -> J.Block

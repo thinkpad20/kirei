@@ -1,41 +1,45 @@
 -- Somewhat hacky JavaScript AST
-module JavaScript.AST where
+module JavaScript.AST (Statement(..),
+                       Expr(..),
+                       Block(..),
+                       render,
+                       throwNewError) where
 
 import Data.List
 import Data.Monoid
 import Control.Applicative
+import Common
 
-type Name = String
 newtype Block = Block [Statement]
 
-data Statement = Expr Expr
-               | If Expr Block Block
-               | If' Expr Block
-               | While Expr Block
-               | For Expr Expr Expr Block
-               | Assign Expr Expr
-               | Return Expr
-               | Return'
-               | Throw Expr
-               | Break
+data Statement =
+  Expr Expr
+  | If Expr Block Block
+  | If' Expr Block
+  | While Expr Block
+  | For Expr Expr Expr Block
+  | Assign Expr Expr
+  | Return Expr
+  | Return'
+  | Throw Expr
+  | Break
 
-data Expr = Bool Bool
-          | Number Double
-          | Var Name
-          | String String
-          | Array [Expr]
-          | This
-          | Function [Name] Block
-          | Parens Expr
-          | Dot Expr Expr
-          | Call Expr [Expr]
-          | ArrayReference Expr Expr
-          | Binary String Expr Expr
-          | Unary String Expr
-          | Ternary Expr Expr Expr
-          | New Expr
-
-(~>) = flip (.)
+data Expr =
+  Bool Bool
+  | Number Double
+  | Var Name
+  | String String
+  | Array [Expr]
+  | This
+  | Function [Name] Block
+  | Parens Expr
+  | Dot Expr Expr
+  | Call Expr [Expr]
+  | ArrayReference Expr Expr
+  | Binary String Expr Expr
+  | Unary String Expr
+  | Ternary Expr Expr Expr
+  | New Expr
 
 instance Show Expr where
   show t = case t of
@@ -104,12 +108,10 @@ instance Render Statement where
     Return' -> ["return;"]
     Return e -> ["return ", render n e, ";"]
     Break -> ["break;"]
-    Expr e -> [render n e, ";"]
+    Expr e -> [render n e, ";\n"]
     Throw e -> ["throw ", render n e, ";"]
     where sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
           rec block = "\n" ++ render (n+1) block
-            --concatMap (sp (n+1) . render (n+1)) stmts
-
 
 instance Render Block where
   render n (Block stmts) = concat $ map (sp n . render n) stmts where

@@ -1,0 +1,15 @@
+let increment = \x -> x + 1;
+console.log (increment 5),
+
+let fact n = 
+  let f n acc = if n < 2 then acc else f (n-1) (acc*n);
+  f n 1;
+
+console.log (fact 15),
+
+let fib n = 
+  let f n prev prev2 =
+    if n < 2 then prev else f (n-1) (n + prev) (prev);
+  f n 1 0;
+
+console.log (fib 20);

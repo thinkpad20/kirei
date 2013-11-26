@@ -4,6 +4,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.State
 import Common
+import Data.Maybe (fromJust)
 import AST
 import Prelude hiding (lookup)
 import Parser
@@ -19,10 +20,11 @@ infixr 4 :=>
 instance Show Type where
   show t = case t of
     TypeVar name -> name
+    NamedType "" ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
     NamedType name [] -> name
     NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
     t1 :=> t2 -> show' t1 ++ " -> " ++ show t2
-    where show' t@(NamedType _ (_:_)) = "(" ++ show t ++ ")"
+    where show' t@(NamedType (_:_) (_:_)) = "(" ++ show t ++ ")"
           show' t@(a :=> b) = "(" ++ show t ++ ")"
           show' t = show t
 
@@ -199,43 +201,85 @@ type TempSubs = M.Map Name Type
 type Env' = ([TypeMap], UsedNames, [TempSubs])
 type Inferrer' = StateT Env' IO
 
+initTM = TypeMap $ M.empty
+initTS = M.empty
+initUsed = S.empty
+
+addUsed :: Name -> Inferrer' ()
 addUsed name = do
-  (tms, u, tss):env <- get
-  put (tms, S.insert name u, tss):env
+  (tms, u, tss) <- get
+  put $ (tms, S.insert name u, tss)
 
+removeUsed :: Name -> Inferrer' ()
 removeUsed name = do
-  (tms, u, tss):env <- get
-  put (tms, S.delete name u, tss):env
+  (tms, u, tss) <- get
+  put $ (tms, S.delete name u, tss)
 
+pushTM :: Inferrer' ()
 pushTM = do
-  (tms, u, tss):env <- get
-  put (initTM:tms, u, tss):env
+  (tms, u, tss) <- get
+  put $ (initTM:tms, u, tss)
 
+pushTMWith :: Name -> Type -> Inferrer' ()
+pushTMWith name typ = pushTM >> addTM name typ
+
+addTM :: Name -> Type -> Inferrer' ()
+addTM name typ = do
+  (TypeMap tm:tms, u, ts) <- get
+  put $ ((TypeMap $ M.insert name typ tm) : tms, u, ts)
+
+popTM :: Inferrer' TypeMap
 popTM = do
-  (tm:tms, u, tss):env <- get
-  put (tms, u, tss):env
+  (tm:tms, u, tss) <- get
+  put $ (tms, u, tss)
   return tm
 
+addTS :: Name -> Type -> Inferrer' ()
 addTS name typ = do
-  (tms, u, ts:tss):env <- get
-  put (tms, u, M.insert name typ ts : tss):env
+  (tms, u, ts:tss) <- get
+  put $ (tms, u, M.insert name typ ts : tss)
 
+popTS :: Inferrer' TempSubs
 popTS = do
-  (tms, u, ts:tss):env <- get
-  put (tms, u, tss):env
+  (tms, u, ts:tss) <- get
+  put $ (tms, u, tss)
   return ts
 
+pushTS :: Inferrer' ()
 pushTS = do
-  (tms, u, tss):env <- get
-  put (tms, u, initTS:tss):env
+  (tms, u, tss) <- get
+  put $ (tms, u, initTS:tss)
+
+getTS :: Inferrer' TempSubs
+getTS = get >>= (\(_, _, ts:_) -> pure ts)
+
+getTSs :: Inferrer' [TempSubs]
+getTSs = get >>= (\(_, _, tss) -> pure tss)
+
+getTMs :: Inferrer' [TypeMap]
+getTMs = get >>= (\(tms, _, _) -> pure tms)
+
+getUsedNames :: Inferrer' UsedNames
+getUsedNames = get >>= (\(_, u, _) -> pure u)
+
+setTM :: TypeMap -> Inferrer' ()
+setTM tm = get >>= (\(_:tms, u, tss) -> put (tm:tms, u, tss))
+
+prnt' = lift . putStrLn
 
 unify' :: Type -> Type -> Inferrer' Type
 unify' type1 type2 = do
-  prnt $ "Unifying " ++ show type1 ++ ", " ++ show type2
+  prnt' $ "Unifying " ++ show type1 ++ ", " ++ show type2
+  getTSs >>= show ~> prnt'
   case (type1, type2) of
     (TypeVar name, t) -> do
+      subs <- getTSs
+      prnt' $ "looking up " ++ name
       -- if name is in type subs, recurse with its substitution
-      -- else add a substitution of name => t and return t
+      case subs !. name of
+        Nothing -> prnt' "hey1" >> addTS name t >> (getTSs >>= show ~> prnt') >> return t
+        Just t' -> prnt' "hey2" >> unify' t' t
+        -- else add a substitution of name => t and return t
       -- need to figure out when to add to type map... maybe in
       -- a let statement, and that's it?
       -- cool thing is that without a specialization something will
@@ -243,16 +287,72 @@ unify' type1 type2 = do
       -- not restricted
     (t, TypeVar name) -> unify' type2 type1
     (t1 :=> t2, t3 :=> t4) -> unify' t1 t3 >> unify' t2 t4
+  where [] !. _ = Nothing
+        (ts:tss) !. name = case M.lookup name ts of
+          Nothing -> tss !. name
+          Just t -> Just t
 
 
-    --(NamedType name ts, NamedType name' ts') | name == name' ->
-    --  NamedType name <$> mapM (uncurry unify) (zip ts ts')
-    --(_, _) -> error $
-    --  "Incompatible types: " ++ show type1 ++
-    --  " can't be unified with " ++ show type2
-    --where replace name newT origT = case origT of
-    --        TypeVar n | n == name -> newT
-    --        a :=> b -> replace name newT a :=> replace name newT b
-    --        NamedType a ts -> NamedType a (replace name newT <$> ts)
-    --        _ -> origT
-    --      remove = S.delete
+infer' :: Expr -> Inferrer' Type
+infer' expr = case expr of
+  Number _ -> pure num
+  String _ -> pure str
+  Bool   _ -> pure bool
+  Tuple es -> NamedType "" <$> mapM infer' es
+  Var name -> getVar' name
+  Apply func arg -> do
+    pushTS
+    argT <- infer' arg
+    funcT <- infer' func
+    returnT <- newVar'
+    res <- unify' funcT (argT :=> returnT)
+    applySubs' >> popTS >> return res
+  Lambda name body -> do
+    argT@(TypeVar var) <- newVar'
+    pushTMWith name argT >> addUsed var
+    bodyT <- infer' body
+    argT' <- getVar' name
+    popTM
+    return $ argT' :=> bodyT
+  Let name expr expr' -> do
+    exprT <- infer' expr
+    addTM name exprT
+    case expr' of
+      Nothing -> return $ NamedType "" []
+      Just e -> infer' e
+  where
+    applySubs' = do
+      ts <- getTS
+      TypeMap tm <- head <$> getTMs
+      setTM $ TypeMap $ fmap (replace ts) tm
+    replace subs t = case t of
+      TypeVar name | name `M.member` subs -> M.lookup name subs ! fromJust
+      a :=> b                             -> replace subs a :=> replace subs b
+      t                                   -> t
+
+start' expr = (runStateT . infer') expr initEnv
+  where initEnv = ([defaults], S.empty, [initTS])
+
+test' = grab ~> symsToVars ~> start'
+
+
+getVar' :: Name -> Inferrer' Type
+getVar' name = do
+  tms <- getTMs
+  lookupRec tms where
+    lookupRec [] = do
+      var <- newVar'
+      addTM name var
+      return var
+    lookupRec (TypeMap tmap:tms) = case M.lookup name tmap of
+      Nothing -> lookupRec tms
+      Just typ -> pure typ
+
+newVar' :: Inferrer' Type
+newVar' = give "a" where
+  give name = do
+    used <- getUsedNames
+    if name `S.member` used then give $ next name
+      else addUsed name >> return (TypeVar name)
+  next name = let (c:cs) = reverse name in
+    reverse (if c < 'z' then succ c : cs else 'a' : c : cs)
