@@ -43,7 +43,7 @@ data Expr =
 
 instance Show Expr where
   show t = case t of
-    Number n -> if isInt n then show $ floor n else show n
+    Number n | isInt n -> show $ floor n | True -> show n
     Var n -> n
     String s -> show s
     This -> "this"
@@ -146,3 +146,4 @@ isIntTo x n = (round $ 10^(fromIntegral n)*(x-(fromIntegral $ round x)))==0
 isInt x = isIntTo x 10
 
 throwNewError msg = Throw $ New $ Call (Var "Error") [String msg]
+

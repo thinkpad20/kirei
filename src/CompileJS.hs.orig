@@ -11,7 +11,11 @@ import Debug.Trace
 import Data.Char
 import Data.List
 import Common
+<<<<<<< HEAD
 import AST
+
+=======
+>>>>>>> master
 
 -- Exporting functions
 toJs :: String -> J.Block

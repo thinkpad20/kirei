@@ -3,10 +3,103 @@ module Parser (grab) where
 import Text.ParserCombinators.Parsec
 import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
+<<<<<<< HEAD
+import Common
+import AST
+=======
 import Data.Monoid
 import Debug.Trace
 import Common
-import AST
+
+type Name = String
+type Matches = [(Expr, Expr)]
+
+data TypeName = TypeName Name [TypeName]
+
+instance Show TypeName where
+  show (TypeName n []) = n
+  show (TypeName n params) = intercalate " " (n: (show <$> params))
+
+data Constructor = Constructor Name [TypeName] deriving Show
+
+data Expr =
+  Bool Bool
+  | Number Double
+  | String String
+  | Symbol Name
+  | Var Name
+  | Underscore
+  | If Expr Expr Expr
+  | Let Name Expr (Maybe Expr)
+  | Apply Expr Expr
+  | Dotted Expr Expr
+  | Comma Expr Expr
+  | Case Expr Matches
+  | Tuple [Expr]
+  | Lambda Name Expr
+  | ExtendedLambda Matches (Maybe Expr)
+  | List ListLiteral
+  | Datatype Name [Name] [Constructor] (Maybe Expr)
+  deriving (Show)
+
+data ListLiteral =
+  ListLiteral [Expr]
+  | ListRange Expr Expr
+  deriving (Show)
+>>>>>>> master
+
+data InString =
+  Plain String
+  | InterShow InString Expr InString
+  | Interpolate InString Expr InString
+
+instance Show InString where
+  show (Plain s) = show s
+  show (InterShow s e s') = show s ++ " ++ show (" ++ show e ++ ") ++ " ++ show s'
+  show (Interpolate s e s') = show s ++ " ++ (" ++ show e ++ ") ++ " ++ show s'
+
+-- | Compiles an interpolated string into an expression via concatenations
+isToExpr :: InString -> Expr
+isToExpr (Plain s) = String s
+isToExpr (InterShow s1 e s2) = case (s1, s2) of
+  (Plain "", Plain "") -> sh e
+  (is, Plain "") -> Apply (pp $ isToExpr is) (sh e)
+  (Plain "", is) -> Apply (pp $ sh e) (isToExpr is)
+  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp $ sh e) (isToExpr is2))
+  where sh = Apply (Var "show")
+        pp = Apply (Symbol "++")
+isToExpr (Interpolate s1 e s2) = case (s1, s2) of
+  (Plain "", Plain "") -> sh e
+  (is, Plain "") -> Apply (pp $ isToExpr is) e
+  (Plain "", is) -> Apply (pp e) (isToExpr is)
+  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp e) (isToExpr is2))
+  where sh = Apply (Var "show")
+        pp = Apply (Symbol "++")
+
+pInString :: Parser InString
+pInString = do
+  first@(Plain s) <- Plain <$> (many $ noneOf "#")
+  choice [
+          try $ pShowExpr $ InterShow first,
+          try $ pLiteralExpr $ Interpolate first,
+          join first <$> (pure prepend <*> char '#' <*> pInString),
+          return first
+        ]
+  where
+    pShowExpr f = f <$> (sstring "#{" *> pExpr) <*> (char '}' *> pInString)
+    pLiteralExpr f = f <$> (sstring "#[" *> pExpr) <*> (char ']' *> pInString)
+    -- prepends a character onto an InString
+    prepend c (Plain s) = Plain (c : s)
+    prepend c (Interpolate s e s') = Interpolate (prepend c s) e s'
+    prepend c (InterShow s e s') = InterShow (prepend c s) e s'
+    -- joins a Plain instring onto another instring
+    join (Plain s) (Plain s') = Plain (s ++ s')
+    join is1 (InterShow s' e s'') = InterShow (join is1 s') e s''
+    join is1 (Interpolate s' e s'') = Interpolate (join is1 s') e s''
+
+pPlain :: Parser InString
+pPlain = Plain <$> (anyChar `manyTill` try end) where
+  end = string "#{" <|> string "#[" <|> (eof >> return "")
 
 skip :: Parser ()
 skip = spaces *> (blockCom <|> lineComment <|> spaces) where
@@ -77,45 +170,6 @@ pDouble = lexeme $ do
     ds' <- many1 digit
     return $ read (ds ++ "." ++ ds')
 
--- | Compiles an interpolated string into an expression via concatenations
-isToExpr :: InString -> Expr
-isToExpr (Plain s) = String s
-isToExpr (InterShow s1 e s2) = case (s1, s2) of
-  (Plain "", Plain "") -> sh e
-  (is, Plain "") -> Apply (pp $ isToExpr is) (sh e)
-  (Plain "", is) -> Apply (pp $ sh e) (isToExpr is)
-  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp $ sh e) (isToExpr is2))
-  where sh = Apply (Var "show")
-        pp = Apply (Symbol "++")
-isToExpr (Interpolate s1 e s2) = case (s1, s2) of
-  (Plain "", Plain "") -> sh e
-  (is, Plain "") -> Apply (pp $ isToExpr is) e
-  (Plain "", is) -> Apply (pp e) (isToExpr is)
-  (is1, is2) -> Apply (pp (isToExpr is1)) (Apply (pp e) (isToExpr is2))
-  where sh = Apply (Var "show")
-        pp = Apply (Symbol "++")
-
-pInString :: Parser InString
-pInString = do
-  first@(Plain s) <- Plain <$> (many $ noneOf "#")
-  choice [
-          try $ pShowExpr $ InterShow first,
-          try $ pLiteralExpr $ Interpolate first,
-          join first <$> (pure prepend <*> char '#' <*> pInString),
-          return first
-        ]
-  where
-    pShowExpr f = f <$> (sstring "#{" *> pExpr) <*> (char '}' *> pInString)
-    pLiteralExpr f = f <$> (sstring "#[" *> pExpr) <*> (char ']' *> pInString)
-    -- prepends a character onto an InString
-    prepend c (Plain s) = Plain (c : s)
-    prepend c (Interpolate s e s') = Interpolate (prepend c s) e s'
-    prepend c (InterShow s e s') = InterShow (prepend c s) e s'
-    -- joins a Plain instring onto another instring
-    join (Plain s) (Plain s') = Plain (s ++ s')
-    join is1 (InterShow s' e s'') = InterShow (join is1 s') e s''
-    join is1 (Interpolate s' e s'') = Interpolate (join is1 s') e s''
-
 pString :: Parser Expr
 pString = do
   raw <- lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
@@ -153,9 +207,6 @@ pDatatype :: Parser Expr
 pDatatype = Datatype <$ keyword "datatype" <*> pVariable <*> many pVariable
                      <* keysim "=" <*> pConstructors
                      <* keysim ";" <*> optionMaybe pExprs where
-  pSingleTypeName = TypeName <$> pVariable <*> pure []
-  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
-                              <*> many pSingleTypeName <* schar ')'
   pConstructor = do
     name <- pVariable
     argumentTypes <- many pType

@@ -4,7 +4,8 @@ module AST (Expr(..),
             TypeName(..),
             Name,
             Matches,
-            prettyExpr) where
+            prettyExpr,
+            InString(..)) where
 
 import Common
 import qualified Data.Map as M
@@ -61,3 +62,13 @@ prettyExpr e = case e of
   Lambda n e -> "\\" ++ n ++ " -> " ++ prettyExpr e
   List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
   List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++ prettyExpr stop ++ "]"
+
+data InString =
+  Plain String
+  | InterShow InString Expr InString
+  | Interpolate InString Expr InString
+
+instance Show InString where
+  show (Plain s) = show s
+  show (InterShow s e s') = show s ++ " ++ show (" ++ show e ++ ") ++ " ++ show s'
+  show (Interpolate s e s') = show s ++ " ++ (" ++ show e ++ ") ++ " ++ show s'

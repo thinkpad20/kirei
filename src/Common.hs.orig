@@ -1,0 +1,28 @@
+<<<<<<< HEAD
+module Common ((~>),
+               (!),
+               (<$>),
+               pure,
+               (<*>),
+               (<$),
+               (*>),
+               (<*),
+               intercalate,
+               Name) where
+
+import Data.List (intercalate)
+import Control.Applicative
+=======
+module Common where
+>>>>>>> master
+
+(~>) = flip (.)
+infixr 9 ~>
+
+(!) = flip ($)
+infixl 0 !
+<<<<<<< HEAD
+
+type Name = String
+=======
+>>>>>>> master
