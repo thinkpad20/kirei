@@ -31,8 +31,7 @@ data Expr =
   | Comma Expr Expr
   | Case Expr Matches
   | Tuple [Expr]
-  | Lambda Name Expr
-  | Lambda' Expr Expr
+  | Lambda Expr Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
   | Sig Name TypeName
@@ -51,7 +50,8 @@ prettyExpr e = case e of
   Symbol op -> op
   Var v -> v
   Underscore -> "_"
-  If c t f -> "if " ++ prettyExpr c ++ " then " ++ prettyExpr t ++ " else " ++ prettyExpr f
+  If c t f -> "if " ++ prettyExpr c ++ " then " ++
+                    prettyExpr t ++ " else " ++ prettyExpr f
   Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
     Nothing -> ""
     Just e2 -> prettyExpr e2)
@@ -62,9 +62,10 @@ prettyExpr e = case e of
     sh = map s ~> intercalate "|"
     s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
   Tuple es -> "(" ++ intercalate ", " (prettyExpr <$> es) ++ ")"
-  Lambda n e -> "\\" ++ n ++ " -> " ++ prettyExpr e
+  Lambda p e -> "\\" ++ prettyExpr p ++ " -> " ++ prettyExpr e
   List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
-  List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++ prettyExpr stop ++ "]"
+  List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++
+                                    prettyExpr stop ++ "]"
 
 data InString =
   Plain String
@@ -88,15 +89,16 @@ symsToVars expr = case expr of
   Case e ms -> Case (symsToVars e)
                 (map (\(e, e') -> (symsToVars e, symsToVars e')) ms)
   Tuple es -> Tuple $ map symsToVars es
-  Lambda name e -> Lambda name (symsToVars e)
+  Lambda pat e -> Lambda (symsToVars pat) (symsToVars e)
   List (ListLiteral l) -> List (ListLiteral $ map symsToVars l)
   List (ListRange a b) -> List (ListRange (symsToVars a) (symsToVars b))
   Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ symsToVars e)
   e -> e
 
---caseToLambda :: Expr -> Expr
---caseToLambda expr = case expr of
---  Case e ms -> Lambda' e (compile ms)
---  where
---    compile [] = matchError
---    compile ((p,r):ms) = Apply _or (Apply (Lambda' p r) e)
+caseToLambda :: Expr -> Expr
+caseToLambda expr = case expr of
+  Case e ms -> Lambda e (compile e ms)
+  where
+    compile _ [] = Var "__matchError__"
+    compile e ((p,r):ms) =
+      Apply (Apply (Symbol "[-]") (Apply (Lambda p r) e)) (compile e ms)

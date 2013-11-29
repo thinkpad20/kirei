@@ -192,7 +192,7 @@ pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
       (Nothing, Nothing) -> (Symbol sym)
       (Just left, Nothing) -> Apply (Symbol sym) left
       (Nothing, Just right) ->
-        Lambda "x" (Apply (Apply (Symbol sym) (Var "x")) right)
+        Lambda (Var "_a") (Apply (Apply (Symbol sym) (Var "_a")) right)
       (Just left, Just right) ->
         Apply (Apply (Symbol sym) left) right
     <|> case left of
@@ -228,7 +228,7 @@ pLambda = do
   expr <- pExpr
   return $ lambda vars expr where
     lambda [] e = e
-    lambda (v:vs) e = Lambda v (lambda vs e)
+    lambda (v:vs) e = Lambda (Var v) (lambda vs e)
 
 -- | Extended let - handles a more general case which gets compiled down into
 -- a regular set statement down the line
@@ -251,7 +251,7 @@ pExtendedLet = do
           arg = "__arg"
           allSame = and $ map (== name) (getName <$> tail ps)
       if allSame then
-        return $ Let name (Lambda arg $ Case (Var arg) matches) next
+        return $ Let name (Lambda (Var arg) $ Case (Var arg) matches) next
         else error $ "Some patterns don't conform"
   where
     getPattern = pure (,) <*> pExpr <* keysim "=" <*> pExprs
@@ -268,7 +268,7 @@ pExtendedLet = do
     getLeft = undefined
     getRight = undefined
     f [] e = e
-    f (a:as) e = Lambda a (f as e)
+    f (a:as) e = Lambda (Var a) (f as e)
 
 -- Kinda hacky, needs to be fixed
 pLet :: Parser Expr
@@ -286,7 +286,7 @@ pLet = do
       Apply a b -> args a ++ args b
       _ -> error $ "Illegal pattern " ++ show p
     f [] e = e
-    f (a:as) e = Lambda a (f as e)
+    f (a:as) e = Lambda (Var a) (f as e)
 
 pSig :: Parser Expr
 pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)

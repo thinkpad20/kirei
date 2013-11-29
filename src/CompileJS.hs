@@ -130,7 +130,7 @@ eToE expr = case expr of
   Var v -> J.Var v
   Symbol s -> J.Var $ toString s
   If c t f -> J.Ternary (eToE c) (eToE t) (eToE f)
-  Lambda x e -> J.Function [x] $ eToBlk e
+  Lambda (Var x) e -> J.Function [x] $ eToBlk e
   Apply a (Tuple es) -> J.Call (eToE a) (eToE <$> es)
   Apply a b -> J.Call (eToE a) [eToE b]
   Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
