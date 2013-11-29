@@ -5,7 +5,8 @@ module AST (Expr(..),
             Name,
             Matches,
             prettyExpr,
-            InString(..)) where
+            InString(..),
+            symsToVars) where
 
 import Common
 import qualified Data.Map as M
@@ -31,6 +32,7 @@ data Expr =
   | Case Expr Matches
   | Tuple [Expr]
   | Lambda Name Expr
+  | Lambda' Expr Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
   | Sig Name TypeName
@@ -41,6 +43,7 @@ data ListLiteral =
   | ListRange Expr Expr
   deriving (Show, Eq, Ord)
 
+prettyExpr :: Expr -> String
 prettyExpr e = case e of
   Bool b -> show b
   Number n -> show n
@@ -72,3 +75,28 @@ instance Show InString where
   show (Plain s) = show s
   show (InterShow s e s') = show s ++ " ++ show (" ++ show e ++ ") ++ " ++ show s'
   show (Interpolate s e s') = show s ++ " ++ (" ++ show e ++ ") ++ " ++ show s'
+
+symsToVars :: Expr -> Expr
+symsToVars expr = case expr of
+  Symbol s -> Var s
+  If c t f -> If (symsToVars c) (symsToVars t) (symsToVars f)
+  Let name e Nothing -> Let name (symsToVars e) Nothing
+  Let name e (Just e') -> Let name (symsToVars e) (Just (symsToVars e'))
+  Apply a b -> Apply (symsToVars a) (symsToVars b)
+  Dotted a b -> Dotted (symsToVars a) (symsToVars b)
+  Comma a b -> Comma (symsToVars a) (symsToVars b)
+  Case e ms -> Case (symsToVars e)
+                (map (\(e, e') -> (symsToVars e, symsToVars e')) ms)
+  Tuple es -> Tuple $ map symsToVars es
+  Lambda name e -> Lambda name (symsToVars e)
+  List (ListLiteral l) -> List (ListLiteral $ map symsToVars l)
+  List (ListRange a b) -> List (ListRange (symsToVars a) (symsToVars b))
+  Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ symsToVars e)
+  e -> e
+
+--caseToLambda :: Expr -> Expr
+--caseToLambda expr = case expr of
+--  Case e ms -> Lambda' e (compile ms)
+--  where
+--    compile [] = matchError
+--    compile ((p,r):ms) = Apply _or (Apply (Lambda' p r) e)

@@ -7,10 +7,12 @@ module Common ((~>),
                (*>),
                (<*),
                intercalate,
-               Name) where
+               Name,
+               foldl') where
 
 import Data.List (intercalate)
 import Control.Applicative
+import Data.List (foldl')
 
 (~>) = flip (.)
 infixr 9 ~>

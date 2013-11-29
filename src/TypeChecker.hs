@@ -1,215 +1,201 @@
 module TypeChecker where
 
-import Parser
-import Data.List (intercalate)
-import Control.Applicative ((<$>))
+import Control.Monad.State
 import qualified Data.Map as M
 import qualified Data.Set as S
-import Control.Monad.Error
-import Control.Monad.Reader
-import Control.Monad.State
-import Control.Monad.Identity
-import Data.Maybe (fromJust)
-import Prelude hiding (lookup)
-import Debug.Trace
+import AST
+import Parser
+import Types
+import Common
 
-data Type =
-  NumberType
-  | StringType
-  | TypeVar Name
-  | TupleType [Type]
-  | NamedTuple Name [Type]
-  | Type :=> Type
-  | UnionType [Type]
-  deriving (Eq, Ord)
+type UsedNames = S.Set Name
+type Env = UsedNames
 
-type TypeMap = M.Map Name Type
-type UsedTypeNames = S.Set Name
-type TypeMaps = [TypeMap]
-type Env = (TypeMaps, UsedTypeNames)
+type TypeChecker = StateT Env IO
 
-pushI :: Inferrer ()
-pushI = do
-  (tmaps, used) <- get
-  put (M.empty : tmaps, used)
+num  = NamedType "Number" []
+str  = NamedType "String" []
+bool = NamedType "Bool" []
+tuple = NamedType ""
 
-popI :: Inferrer TypeMap
-popI = do
-  ((m:ms), used) <- get
-  put (ms, used)
-  return m
+getUsed :: TypeChecker UsedNames
+getUsed = get
 
-mismatchError :: Type -> Type -> a
-mismatchError argT funcT = error $
-  "Error: couldn't match " ++ show argT ++ " with " ++ show funcT
+addUsed :: Name -> TypeChecker ()
+addUsed name = modify (S.insert name)
 
-applyError :: Type -> Type -> a
-applyError argT funcT = error $ concat
-  ["Error: ", show funcT, " is not a function (applied to ", show argT, ")"]
+freeUsed :: Name -> TypeChecker ()
+freeUsed name = modify (S.delete name)
 
-startInfer expr = (runStateT . infer) expr (start, S.empty)
+none = M.empty
+(•)  = M.union
 
-type Inferrer a = StateT Env IO a
+generalize :: TypeEnvironment -> Type -> Scheme
+generalize env t = Scheme (S.toList $ free t S.\\ free env) t
 
-getNewTypeName :: Inferrer Type
-getNewTypeName = give "a" where
-  give name = do
-    (tmaps, used) <- get
-    case name `S.member` used of
-      True -> give $ next name
-      False -> do
-        --lift $ putStrLn $ "Found a new name '" ++ name ++ "'"
-        put (tmaps, S.insert name used)
-        return $ TypeVar name
-  next name = let (c:cs) = reverse name in
-    reverse (if c < 'z' then succ c : cs else 'a' : c : cs)
+instantiate :: Scheme -> TypeChecker Type
+instantiate (Scheme vars term) = do
+  newVars <- mapM makename vars
+  return $ apply (M.fromList  $ zip vars newVars) term
 
-lookup :: String -> Inferrer (Maybe Type)
-lookup name = do
-  (tmaps, _) <- get
-  look tmaps name where
-    look [] _ = return Nothing
-    look (m:ms) name = case M.lookup name m of
-      Nothing -> look ms name
-      Just t -> return $ Just t
+newvar :: TypeChecker Type
+newvar = makename "a"
 
-addType :: Name -> Type -> Inferrer Type
-addType name t = do
-  modEnv (\(m:ms) -> M.insert name t m:ms) (S.insert (show t))
-  return t
+makename :: Name -> TypeChecker Type
+makename name = getUsed >>= \s -> case S.member name s of
+  False -> addUsed name >> pure (TypeVar name)
+  True -> let (c:cs) = reverse name in
+    makename $ reverse (if c < 'z' then succ c:cs else 'a':c:cs)
 
---p' = lift . putStrLn
-
--- | Will seek to "unify" types t1 and t2, meaning that any free
--- variables in t1 will be assigned to corresponding ones in t2.
--- If there is a type mismatch, we'll fail.
-unify :: Type -> Type -> Inferrer ()
-unify origT newT = case (origT, newT) of
-  (_, TypeVar _) -> unify newT origT -- order is irrelevant
-  (TypeVar name, newT) -> updateMaps name newT >> updateUsed name
-  (a :=> b, c :=> d) -> unify a c >> unify b d
-  (t1, t2) -> error $ "Can't deal with " ++ show t1 ++ ", " ++ show t2
-  where
-    replaceType name newT origT = case origT of
-      TypeVar n | n == name -> newT
-      t :=> t' -> replaceType name newT t :=> replaceType name newT t'
-      TupleType ts -> TupleType (replaceType name newT <$> ts)
-      NamedTuple n ts -> NamedTuple n (replaceType name newT <$> ts)
-      UnionType ts -> UnionType (replaceType name newT <$> ts)
-      _ -> origT
-    updateMaps name typ = do
-      addType name typ
-      modTmaps $ fmap (fmap $ replaceType name typ)
-    updateUsed name = modUsed $ S.delete name
-
-
-
-infer :: Expr -> Inferrer Type
-infer expr = case expr of
-  Number _ -> return NumberType
-  String _ -> return StringType
-  Symbol s -> infer (Var s)
-  Var v -> do
-    tp <- lookup v
-    case tp of
-      Just t -> return t
-      Nothing -> getNewTypeName >>= addType v
+infer :: TypeEnvironment -> Expr -> TypeChecker (Substitutions, Type)
+infer te@(TE env) expr = case expr of
+  Number _ -> return (none, num)
+  String _ -> return (none, str)
+  Bool   _ -> return (none, bool)
+  Var    x -> case M.lookup x env of
+    -- this feels kinda hacky, but it seems to work, otherwise recursion doesn't
+    Nothing -> do
+      prnt $ x ++ " is nothin'"
+      newvar >>= \v -> return (M.singleton x v, v)  -- error $ "Undefined variable `" ++ x ++ "`"
+    Just t  -> do
+      prnt $ x ++ " is just " ++ show t
+      instantiate t >>= \t' -> return (none, t')
+  Tuple exprs -> do
+    subsAndTypes <- mapM (infer te) exprs
+    return (foldl' (•) none (fst <$> subsAndTypes), tuple $ snd <$> subsAndTypes)
+  Lambda x e  -> do
+    let saved = M.lookup x
+    β        <- newvar
+    (s1, t1) <- infer (TE $ M.insert x (Scheme [] β) env) e
+    return (s1, apply s1 β :=> t1)
   Apply e1 e2 -> do
-    argT <- infer e2 -- type of the argument e2
-    funcT <- infer e1 -- type of the function e1, if it is one
-    r@(TypeVar retT) <- getNewTypeName -- type that this expr will evaluate to
-    unify funcT (argT :=> r) -- this will fail if types mismatch
-    -- if we can look up retT it means it's been assigned to something
-    maybeReturnT <- lookup retT
-    return $ case maybeReturnT of
-      Nothing -> r
-      Just returnT -> returnT
-  Lambda n e -> do
-    argT <- (getNewTypeName >>= addType n)
-    returnT <- infer e
-    return $ argT :=> returnT
+    prnt $ "inferring (" ++ show e1 ++ ") (" ++ show e2 ++ ")"
+    (s1, t1) <- infer te e1
+    prnt $ "e1: " ++ show e1 ++ " : " ++ show (s1, t1)
+    (s2, t2) <- infer (apply s1 te) e2
+    prnt $ "e2: " ++ show e2 ++ " : " ++ show (s2,t2)
+    β        <- newvar
+    s3       <- (apply s2 t1) `unify` (t2 :=> β)
+    prnt $ "final type " ++ show (apply s3 β)
+    prnt $ "final subs " ++ show (s2 • s2 • s1)
+    return (s2 • s2 • s1, apply s3 β)
+  Let var e1 e2 -> do
+    (subs1, type1) <- infer te e1
+    case e2 of
+      Nothing -> return (subs1, NamedType "" [])
+      Just e2 -> do
+        let env' = TE $ M.insert var (generalize (apply subs1 te) type1) env
+        (subs2, type2) <- infer env' e2
+        return (subs2 • subs1, type2)
+  If c t f -> do
+    (cSubs, cType) <- infer te c
+    cSubs'         <- cType `unify` bool
+    (tSubs, tType) <- infer (apply (cSubs' • cSubs) te) t
+    (fSubs, fType) <- infer (apply (tSubs • cSubs' • cSubs) te) f
+    finalSubs      <- tType `unify` fType
+    return (finalSubs • fSubs • tSubs • cSubs' • cSubs, tType)
+  Case e matches -> do
+    (eSubs, eType) <- infer te e
+    --prnt$ "inferred type of " ++ show e ++ " to be " ++ show eType
+    -- infer the types of all the patterns and unify them with `e`
+    patternSubs <- unifyAll [none] eType $ fst' matches
+    --prnt$ "got the pattern subs done"
+    -- infer the types of all of the results and unify them with each other
+    subsAndType <- mapM (inferMatch (eSubs, eType)) matches
+    let rType = subsAndType ! snd' ! head
+    --prnt$ "rType is " ++ show rType
+    rSubs <- unify' none rType (subsAndType ! snd' ! tail)
+    return (foldl' (•) rSubs (fst' subsAndType), rType)
+    where
+      fst' = fmap fst
+      snd' = fmap snd
+      unifyAll subList _ []    = return $ foldl' (•) none (subList)
+      unifyAll subList rt (pat:pats) = do
+        (pSubs, pType)  <- infer te pat
+        subs            <- unify rt pType
+        unifyAll (subs : pSubs : subList) rt pats
+
+      -- inferMatch infers the type of a pattern and its result
+      -- key question: should we be adding/removing things from the namespace?
+      -- SPJ would have the answer for me...
+      inferMatch (eSubs, eType) (pat, res) = do
+        prnt $ "Inferring " ++ show pat ++ " -> " ++ show res
+        (pSubs, pType) <- infer (apply eSubs te) pat
+        prnt $ "pSubs, pType is " ++ show (pSubs, pType)
+        pSubs' <- pType `unify` eType
+        prnt$ "pSubs' is " ++ show pSubs'
+        -- need to add any new variables into the environment
+        let vars = getVars pat
+        newvars <- mapM (makename ~> fmap (Scheme [])) vars
+        let te' = TE $ env `M.union` (M.fromList $ zip vars newvars)
+        prnt $ "inferring res which is " ++ show res
+        prnt $ "total subs to apply are " ++ show (pSubs' • pSubs • eSubs)
+        prnt $ "doing this with type env " ++ show (apply (pSubs' • pSubs • eSubs) te')
+        (rSubs, rType) <- infer (apply (pSubs' • pSubs • eSubs) te') res
+        prnt $ "rSubs, rType is " ++ show (rSubs, rType)
+        return (rSubs • pSubs' • pSubs • eSubs, rType)
+      unify' :: Substitutions -> Type -> [Type] -> TypeChecker Substitutions
+      unify' subs _ [] = return subs
+      unify' subs t (t':ts) = unify t t' >>= \s' -> unify' (s' • subs) t' ts
+      getVars :: Expr -> [Name]
+      getVars (Var x) = [x]
+      getVars (Apply a b) = getVars a ++ getVars b
+      getVars (Number _) = []
+      getVars (String _) = []
+      getVars (Bool _)   = []
+      getVars (Tuple es) = concatMap getVars es
+      getVars e = error $ "Illegal pattern " ++ show e
 
 
-test = startInfer . grab
 
-testInputs =
+
+unify :: Type -> Type -> TypeChecker Substitutions
+unify a b = do
+  case (a,b) of
+    (l :=> r, l' :=> r') -> do
+      s1 <- l `unify` l'
+      s2 <- apply s1 r `unify` apply s1 r'
+      return (s1 • s2)
+    (TypeVar u, t) -> u `bind` t
+    (t, TypeVar u) -> u `bind` t
+    (NamedType n ts, NamedType n' ts')
+      | n == n' -> do
+        subList <- mapM (uncurry unify) (zip ts ts')
+        return (foldl' (•) none subList)
+      | otherwise -> error $ "Named type mismatch: " ++ n ++ " !: " ++ n'
+    (t1, t2) -> error $ "types do not unify: " ++ show t1 ++ " !: " ++ show t2
+  where
+    bind name typ | typ == TypeVar name = return none
+                  | name `S.member` free typ = error $
+                      "Error: " ++ name ++ " occurs free in type " ++ show typ
+                  | otherwise = return (M.singleton name typ)
+
+
+initials = TE $ M.fromList
   [
-    ("a", TypeVar "a"),
-    ("a *", NumberType :=> NumberType),
-    ("a * b", NumberType),
-    ("\"hello\"", StringType),
-    ("map (2 *) foo", TypeVar "b")
+    --("+", lit $ num :=> num :=> num),
+    --("-", lit $ num :=> num :=> num),
+    --("*", lit $ num :=> num :=> num),
+    --("/", lit $ num :=> num :=> num),
+    --("<", lit $ num :=> num :=> bool),
+    --(">", lit $ num :=> num :=> bool),
+    --("<=", lit $ num :=> num :=> bool),
+    --(">=", lit $ num :=> num :=> bool),
+    --("&&", lit $ bool :=> bool :=> bool),
+    --("not", lit $ bool :=> bool),
+    ("Empty", witha $ n "List" [tvar]),
+    ("::", witha $ tvar :=> n "List" [tvar] :=> n "List" [tvar])
+    --("undefined", witha tvar)
   ]
+  where lit = Scheme []
+        witha = Scheme ["a"]
+        tvar = TypeVar "a"
+        cons = Scheme ["a"]
+        n = NamedType
 
-verify :: Type -> Type -> Bool
-verify (TypeVar _) (TypeVar _) = True
-verify (a :=> b) (c :=> d) = verify a c && verify b d
-verify (TupleType as) (TupleType bs) = and $ zipWith verify as bs
-verify (NamedTuple n as) (NamedTuple m bs) =
-  n == m && (and $ zipWith verify as bs)
-verify t1 t2 = t1 == t2
-
-runTests = mapM_ run testInputs where
-  run (input, result) = do
-    (res, _) <- test input
-    if not $ verify res result
-      then putStrLn $ c ["Failed test! (", input, ") !: ", show res]
-      else putStrLn $ c ["Test passed! (", input, ") : ", show result]
-  c = concat
-
-instance Show Type where
-  show t = case t of
-    NumberType -> "Number"
-    StringType -> "String"
-    TypeVar name -> name
-    TupleType ts -> concat ["(", intercalate ", " $ show <$> ts, ")"]
-    NamedTuple name ts -> name ++ case ts of
-      [] -> ""
-      [t] -> " " ++ show' t
-      ts -> "(" ++ intercalate " " (show' <$> ts) ++ ")"
-    t1 :=> t2 -> case t1 of
-      _ :=> _ -> concat ["(", show t1, ")", " -> ", show t2]
-      _ -> show t1 ++ " -> " ++ show t2
-    where show' NumberType = show NumberType
-          show' StringType = show StringType
-          show' (TypeVar n) = n
-          show' (NamedTuple n []) = show n
-          show' t@(TupleType _) = show t
-          show' t = "(" ++ show t ++ ")"
-
-modEnv f g = do
-  (tmaps, used) <- get
-  put (f tmaps, g used)
-
-modTmaps :: (TypeMaps -> TypeMaps) -> Inferrer ()
-modTmaps f = modEnv f id
-
-modUsed :: (UsedTypeNames -> UsedTypeNames) -> Inferrer ()
-modUsed f = modEnv id f
-
-num = NumberType
-str = StringType
-infixr 3 :=>
-tvar = TypeVar
-list a = NamedTuple "List" [a]
-list' = list . tvar
-array a = NamedTuple "Array" [a]
-bool = NamedTuple "Bool" []
-
-start :: TypeMaps
-start =
-  [
-    M.fromList [
-      ("+", num :=> num :=> num)
-      --("map", (tvar "a" :=> tvar "b") :=> list' "a" :=> list' "b")
-      --("-", num :=> num :=> num),
-      --("*", num :=> num :=> num),
-      --("/", num :=> num :=> num),
-      --("at", str :=> num :=> str),
-      --("True", bool),
-      --("False", bool),
-      --("[]", list $ TypeVar "a"),
-      --("::", TypeVar "a" :=> (list $ TypeVar "a")),
-      --("length", list $ TypeVar "a")
-    ]
-  ]
+prnt :: String -> TypeChecker ()
+prnt = lift . putStrLn
+runInfer = infer initials ~> flip runStateT (S.singleton "a")
+test input = do
+  ((subs, typ), used) <- input ! grab ! symsToVars ! runInfer
+  putStrLn $ input ++ "\nis of type\n" ++ show typ
