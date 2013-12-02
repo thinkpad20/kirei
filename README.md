@@ -37,7 +37,7 @@ Kirei moves to take many of the best parts from Haskell, such as its static typi
 In Kirei, the code above might look something like this:
 
 ```haskell
-let getTyped io =
+let getTyped : IO -> () =  \io ->
   println "Write something:" io,
   let s = getLine io;
   println ("You typed: " ++ s) io;
