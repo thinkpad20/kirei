@@ -16,14 +16,14 @@ data Type =
   TypeVar Name            -- e.g. `a` in `foo : a -> (a, String)` or `List a`
   | NamedType Name [Type] -- e.g. `String` or `List Int`
   | Type :=> Type         -- functions
-  deriving (Eq, Ord)
+  deriving (Show, Eq, Ord)
 
 infixr 4 :=>
 
-instance Show Type where
-  show t = case t of
+instance Render Type where
+  render _ t = case t of
     TypeVar name -> name
-    NamedType "" ts -> "(" ++ intercalate ", " (map show ts) ++ ")"
+    NamedType "" ts -> "(" ++ intercalate ", " (map (render 0) ts) ++ ")"
     NamedType name [] -> name
     NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
     t1 :=> t2 -> show' t1 ++ " -> " ++ show t2

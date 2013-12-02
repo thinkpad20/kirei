@@ -88,9 +88,6 @@ instance Monoid Block where
 
 indentation = 2
 
-class Render a where
-  render :: Int -> a -> String
-
 instance Render Statement where
   render n stmt = concat $ case stmt of
     If' e b -> ["if (", render n e, ") {", rec b, sp n "}"]

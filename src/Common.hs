@@ -8,7 +8,8 @@ module Common ((~>),
                (<*),
                intercalate,
                Name,
-               foldl') where
+               foldl',
+               Render(..)) where
 
 import Data.List (intercalate)
 import Control.Applicative
@@ -21,3 +22,6 @@ infixr 9 ~>
 infixl 0 !
 
 type Name = String
+
+class Render a where
+  render :: Int -> a -> String

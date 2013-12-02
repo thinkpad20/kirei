@@ -24,7 +24,7 @@ data Expr =
   | Var Name
   | Underscore
   | If Expr Expr Expr
-  | Let Name (Maybe Type) Expr (Maybe Expr)
+  | Let Name Expr (Maybe Expr)
   | Apply Expr Expr
   | Dotted Expr Expr
   | Comma Expr Expr
@@ -51,7 +51,7 @@ prettyExpr e = case e of
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
-  Let n mt e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
+  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
     Nothing -> ""
     Just e2 -> prettyExpr e2)
   Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
@@ -83,8 +83,8 @@ symsToVars :: Expr -> Expr
 symsToVars expr = case expr of
   Symbol s -> Var s
   If c t f -> If (symsToVars c) (symsToVars t) (symsToVars f)
-  Let name mt e Nothing -> Let name mt (symsToVars e) Nothing
-  Let name mt e (Just e') -> Let name mt (symsToVars e) (Just (symsToVars e'))
+  Let name e Nothing -> Let name (symsToVars e) Nothing
+  Let name e (Just e') -> Let name (symsToVars e) (Just (symsToVars e'))
   Apply a b -> Apply (symsToVars a) (symsToVars b)
   Dotted a b -> Dotted (symsToVars a) (symsToVars b)
   Comma a b -> Comma (symsToVars a) (symsToVars b)

@@ -229,12 +229,16 @@ pLambda = do
     lambda [] e = e
     lambda (v:vs) e = Lambda (Var v) (lambda vs e)
 
--- Kinda hacky, needs to be fixed
 pLet :: Parser Expr
-pLet = Let <$ keyword "let" <*> (pVariable <|> pSymbol)
-           <*> optionMaybe (keysim ":" *> pType)
-           <*  keysim "=" <*> pExprs <* keysim ";"
-           <*> optionMaybe pExprs
+pLet = do
+  name  <- keyword "let" *> (pVariable <|> pSymbol)
+  mType <- optionMaybe (keysim ":" *> pType)
+  body  <- keysim "=" *> pExprs <* keysim ";"
+  next  <- optionMaybe pExprs
+  let thisLet = Let name body next
+  return $ case mType of
+    Nothing -> thisLet
+    Just typ -> Sig name typ $ Just thisLet
 
 pSig :: Parser Expr
 pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
@@ -249,7 +253,7 @@ pType = chainr1 pType' (keysim "->" *> pure (:=>)) where
         return $ NamedType name subTypes
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pLet, pDatatype, pBinary precedences]
+pExpr = choice [pIf, pSig, pLet, pDatatype, pBinary precedences]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
