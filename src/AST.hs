@@ -6,7 +6,8 @@ module AST (Expr(..),
             Matches,
             prettyExpr,
             InString(..),
-            symsToVars) where
+            symsToVars,
+            caseToLambda) where
 
 import Common
 import qualified Data.Map as M
@@ -86,8 +87,7 @@ symsToVars expr = case expr of
   Apply a b -> Apply (symsToVars a) (symsToVars b)
   Dotted a b -> Dotted (symsToVars a) (symsToVars b)
   Comma a b -> Comma (symsToVars a) (symsToVars b)
-  Case e ms -> Case (symsToVars e)
-                (map (\(e, e') -> (symsToVars e, symsToVars e')) ms)
+  c@(Case e ms) -> symsToVars $ caseToLambda c
   Tuple es -> Tuple $ map symsToVars es
   Lambda pat e -> Lambda (symsToVars pat) (symsToVars e)
   List (ListLiteral l) -> List (ListLiteral $ map symsToVars l)

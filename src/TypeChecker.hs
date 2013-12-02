@@ -63,11 +63,14 @@ infer te@(TE env) expr = case expr of
   Tuple exprs -> do
     subsAndTypes <- mapM (infer te) exprs
     return (foldl' (•) none (fst <$> subsAndTypes), tuple $ snd <$> subsAndTypes)
-  Lambda x e  -> do
-    let saved = M.lookup x
+  Lambda (Var x) e  -> do
     β        <- newvar
     (s1, t1) <- infer (TE $ M.insert x (Scheme [] β) env) e
     return (s1, apply s1 β :=> t1)
+  Lambda p e -> do
+    (pSubs, pType) <- infer te p
+    (eSubs, eType) <- infer (apply pSubs te) e
+    return (eSubs • pSubs, eType)
   Apply e1 e2 -> do
     prnt $ "inferring (" ++ show e1 ++ ") (" ++ show e2 ++ ")"
     (s1, t1) <- infer te e1
@@ -94,57 +97,59 @@ infer te@(TE env) expr = case expr of
     (fSubs, fType) <- infer (apply (tSubs • cSubs' • cSubs) te) f
     finalSubs      <- tType `unify` fType
     return (finalSubs • fSubs • tSubs • cSubs' • cSubs, tType)
-  Case e matches -> do
-    (eSubs, eType) <- infer te e
-    --prnt$ "inferred type of " ++ show e ++ " to be " ++ show eType
-    -- infer the types of all the patterns and unify them with `e`
-    patternSubs <- unifyAll [none] eType $ fst' matches
-    --prnt$ "got the pattern subs done"
-    -- infer the types of all of the results and unify them with each other
-    subsAndType <- mapM (inferMatch (eSubs, eType)) matches
-    let rType = subsAndType ! snd' ! head
-    --prnt$ "rType is " ++ show rType
-    rSubs <- unify' none rType (subsAndType ! snd' ! tail)
-    return (foldl' (•) rSubs (fst' subsAndType), rType)
-    where
-      fst' = fmap fst
-      snd' = fmap snd
-      unifyAll subList _ []    = return $ foldl' (•) none (subList)
-      unifyAll subList rt (pat:pats) = do
-        (pSubs, pType)  <- infer te pat
-        subs            <- unify rt pType
-        unifyAll (subs : pSubs : subList) rt pats
+  c@(Case e matches) -> infer te $ caseToLambda c
 
-      -- inferMatch infers the type of a pattern and its result
-      -- key question: should we be adding/removing things from the namespace?
-      -- SPJ would have the answer for me...
-      inferMatch (eSubs, eType) (pat, res) = do
-        prnt $ "Inferring " ++ show pat ++ " -> " ++ show res
-        (pSubs, pType) <- infer (apply eSubs te) pat
-        prnt $ "pSubs, pType is " ++ show (pSubs, pType)
-        pSubs' <- pType `unify` eType
-        prnt$ "pSubs' is " ++ show pSubs'
-        -- need to add any new variables into the environment
-        let vars = getVars pat
-        newvars <- mapM (makename ~> fmap (Scheme [])) vars
-        let te' = TE $ env `M.union` (M.fromList $ zip vars newvars)
-        prnt $ "inferring res which is " ++ show res
-        prnt $ "total subs to apply are " ++ show (pSubs' • pSubs • eSubs)
-        prnt $ "doing this with type env " ++ show (apply (pSubs' • pSubs • eSubs) te')
-        (rSubs, rType) <- infer (apply (pSubs' • pSubs • eSubs) te') res
-        prnt $ "rSubs, rType is " ++ show (rSubs, rType)
-        return (rSubs • pSubs' • pSubs • eSubs, rType)
-      unify' :: Substitutions -> Type -> [Type] -> TypeChecker Substitutions
-      unify' subs _ [] = return subs
-      unify' subs t (t':ts) = unify t t' >>= \s' -> unify' (s' • subs) t' ts
-      getVars :: Expr -> [Name]
-      getVars (Var x) = [x]
-      getVars (Apply a b) = getVars a ++ getVars b
-      getVars (Number _) = []
-      getVars (String _) = []
-      getVars (Bool _)   = []
-      getVars (Tuple es) = concatMap getVars es
-      getVars e = error $ "Illegal pattern " ++ show e
+
+    --(eSubs, eType) <- infer te e
+    ----prnt$ "inferred type of " ++ show e ++ " to be " ++ show eType
+    ---- infer the types of all the patterns and unify them with `e`
+    --patternSubs <- unifyAll [none] eType $ fst' matches
+    ----prnt$ "got the pattern subs done"
+    ---- infer the types of all of the results and unify them with each other
+    --subsAndType <- mapM (inferMatch (eSubs, eType)) matches
+    --let rType = subsAndType ! snd' ! head
+    ----prnt$ "rType is " ++ show rType
+    --rSubs <- unify' none rType (subsAndType ! snd' ! tail)
+    --return (foldl' (•) rSubs (fst' subsAndType), rType)
+    --where
+    --  fst' = fmap fst
+    --  snd' = fmap snd
+    --  unifyAll subList _ []    = return $ foldl' (•) none (subList)
+    --  unifyAll subList rt (pat:pats) = do
+    --    (pSubs, pType)  <- infer te pat
+    --    subs            <- unify rt pType
+    --    unifyAll (subs : pSubs : subList) rt pats
+
+    --  -- inferMatch infers the type of a pattern and its result
+    --  -- key question: should we be adding/removing things from the namespace?
+    --  -- SPJ would have the answer for me...
+    --  inferMatch (eSubs, eType) (pat, res) = do
+    --    prnt $ "Inferring " ++ show pat ++ " -> " ++ show res
+    --    (pSubs, pType) <- infer (apply eSubs te) pat
+    --    prnt $ "pSubs, pType is " ++ show (pSubs, pType)
+    --    pSubs' <- pType `unify` eType
+    --    prnt$ "pSubs' is " ++ show pSubs'
+    --    -- need to add any new variables into the environment
+    --    let vars = getVars pat
+    --    newvars <- mapM (makename ~> fmap (Scheme [])) vars
+    --    let te' = TE $ env `M.union` (M.fromList $ zip vars newvars)
+    --    prnt $ "inferring res which is " ++ show res
+    --    prnt $ "total subs to apply are " ++ show (pSubs' • pSubs • eSubs)
+    --    prnt $ "doing this with type env " ++ show (apply (pSubs' • pSubs • eSubs) te')
+    --    (rSubs, rType) <- infer (apply (pSubs' • pSubs • eSubs) te') res
+    --    prnt $ "rSubs, rType is " ++ show (rSubs, rType)
+    --    return (rSubs • pSubs' • pSubs • eSubs, rType)
+    --  unify' :: Substitutions -> Type -> [Type] -> TypeChecker Substitutions
+    --  unify' subs _ [] = return subs
+    --  unify' subs t (t':ts) = unify t t' >>= \s' -> unify' (s' • subs) t' ts
+    --  getVars :: Expr -> [Name]
+    --  getVars (Var x) = [x]
+    --  getVars (Apply a b) = getVars a ++ getVars b
+    --  getVars (Number _) = []
+    --  getVars (String _) = []
+    --  getVars (Bool _)   = []
+    --  getVars (Tuple es) = concatMap getVars es
+    --  getVars e = error $ "Illegal pattern " ++ show e
 
 
 
@@ -183,13 +188,16 @@ initials = TE $ M.fromList
     --(">=", lit $ num :=> num :=> bool),
     --("&&", lit $ bool :=> bool :=> bool),
     --("not", lit $ bool :=> bool),
-    ("Empty", witha $ n "List" [tvar]),
-    ("::", witha $ tvar :=> n "List" [tvar] :=> n "List" [tvar])
-    --("undefined", witha tvar)
+    --("__matchFail__", witha a),
+    ("__matchError__", witha a),
+    ("[-]", witha $ a :=> a :=> a),
+    ("Empty", witha $ n "List" [a]),
+    ("::", witha $ a :=> n "List" [a] :=> n "List" [a]),
+    ("undefined", witha a)
   ]
   where lit = Scheme []
         witha = Scheme ["a"]
-        tvar = TypeVar "a"
+        a = TypeVar "a"
         cons = Scheme ["a"]
         n = NamedType
 
