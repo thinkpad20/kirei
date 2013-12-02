@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module TypeChecker where
 
 import Control.Monad.State
@@ -9,7 +10,7 @@ import Types
 import Common
 
 type UsedNames = S.Set Name
-type Env = (TypeEnvironment, UsedNames)
+type Env = ([TypeEnvironment], UsedNames)
 
 type TypeChecker = StateT Env IO
 
@@ -19,16 +20,13 @@ bool = NamedType "Bool" []
 tuple = NamedType ""
 
 getUsed :: TypeChecker UsedNames
-getUsed = get
+getUsed = get >>= \(_, used) -> return used
 
 addUsed :: Name -> TypeChecker ()
-addUsed name = modify (S.insert name)
+addUsed name = modify (\(env, used) -> (env, S.insert name used))
 
 freeUsed :: Name -> TypeChecker ()
-freeUsed name = modify (S.delete name)
-
-none = M.empty
-(•)  = M.union
+freeUsed name = modify (\(env, used) -> (env, S.delete name used))
 
 generalize :: TypeEnvironment -> Type -> Scheme
 generalize env t = Scheme (S.toList $ free t S.\\ free env) t
@@ -47,88 +45,104 @@ makename name = getUsed >>= \s -> case S.member name s of
   True -> let (c:cs) = reverse name in
     makename $ reverse (if c < 'z' then succ c:cs else 'a':c:cs)
 
-infer :: TypeEnvironment -> Expr -> TypeChecker (Substitutions, Type)
-infer te@(TE env) expr = case expr of
-  Number _ -> return (none, num)
-  String _ -> return (none, str)
-  Bool   _ -> return (none, bool)
-  Var    x -> case M.lookup x env of
-    -- this feels kinda hacky, but it seems to work, otherwise recursion doesn't
-    Nothing -> do
-      prnt $ x ++ " is nothin'"
-      newvar >>= \v -> return (M.singleton x v, v)  -- error $ "Undefined variable `" ++ x ++ "`"
-    Just t  -> do
-      prnt $ x ++ " is just " ++ show t
-      instantiate t >>= \t' -> return (none, t')
+infer :: Expr -> TypeChecker Type
+infer expr = case expr of
+  Number _ -> return num
+  String _ -> return str
+  Bool   _ -> return bool
+  Var    x -> getTypeOf x >>= \t' -> return t'
   Tuple exprs -> do
-    subsAndTypes <- mapM (infer te) exprs
-    return (foldl' (•) none (fst <$> subsAndTypes), tuple $ snd <$> subsAndTypes)
+    tuple <$> mapM infer exprs
   Lambda (Var x) e  -> do
-    β        <- newvar
-    (s1, t1) <- infer (TE $ M.insert x (Scheme [] β) env) e
-    return (s1, apply s1 β :=> t1)
-  Lambda p e -> do
-    (pSubs, pType) <- infer te p
-    (eSubs, eType) <- infer (apply pSubs te) e
-    return (eSubs • pSubs, eType)
-  Sig name typ e -> let sub = M.singleton name typ in case e of
-    Nothing -> return (sub, tuple [])
-    Just e -> infer (apply sub te) e
+    -- need to be able to read the environment... this is tough
+    -- could have some kind of queue like:
+    -- sig foo : a -> b -> c pushes a, b, c.
+    -- let foo = \x -> y we see a lambda so we consume a, we know
+    -- x is a. But what would be better is to have this done when
+    -- we do a let, not a sig. So for example when we say let foo =,
+    -- we look up foo and push a, then b, then c. Then we read that
+    -- stack when we do the lambda. Of course that would mean all lambdas
+    -- must be assigned variables, which blows. Another strategy?
+    {-
+      \f -> map f [1..10]
+      We withhold judgment on the variable until we see how it's used. We know
+      map is (a -> b) -> [a] -> [b], so we know f : (a -> b), and we know
+      [1..10] : [Number], so a is a Number, and f : (Number -> b). Then
+      \f -> map f [1..10] : (Number -> b) -> [b]
+      We can tell this by a series of specializations.
+      What that means then is we start by saying f : newvar (let's say x)
+      Then we apply map to f so we get (a -> b) -> ... from that inferrence,
+      then we unify (a -> b) with x, so f : (a -> b) (of course it still has a
+      and b in its scheme). In the next step we apply (map f) to [1..10] and
+      (map f) has the type [a] -> [b], so we unify [a] with [Number] which means
+      a is Number, which means all `a`s in the current scope can be collapsed to
+      Number, so f : Number -> b (only b in its scheme now), and we return a [b].
+    -}
+    t@(TypeVar name) <- newvar
+    pushEnvWith x (Scheme [name] t)
+    t' <- infer e
+    argType <- getTypeOf x
+    popEnv
+    return $ argType :=> t'
+  Sig name typ e -> do
+    addToEnv name (Scheme [] typ)
+    case e of
+      Nothing -> return $ tuple []
+      Just e -> infer e
   Apply e1 e2 -> do
-    prnt $ "inferring (" ++ show e1 ++ ") (" ++ show e2 ++ ")"
-    (s1, t1) <- infer te e1
-    prnt $ "e1: " ++ show e1 ++ " : " ++ show (s1, t1)
-    (s2, t2) <- infer (apply s1 te) e2
-    prnt $ "e2: " ++ show e2 ++ " : " ++ show (s2,t2)
-    β        <- newvar
-    s3       <- (apply s2 t1) `unify` (t2 :=> β)
-    prnt $ "final type " ++ show (apply s3 β)
-    prnt $ "final subs " ++ show (s2 • s2 • s1)
-    return (s2 • s2 • s1, apply s3 β)
-  Let var Nothing e1 e2 -> error $ "Type of " ++ var ++ " can't be inferred"
-  Let var (Just typ) e1 e2 -> do
-    (subs1, type1) <- infer te e1
-    subs2 <- unify typ type1
+    t1 <- infer e1
+    case t1 of
+      a :=> b -> do
+        t2 <- infer e2
+        unify a t2
+        return b
+      otherwise -> error $ "Expression `" ++ show e1 ++ "` is not a function"
+  Let var e1 e2 -> do
+    recorded <- getTypeOf var
+    t1 <- infer e1
+    unify recorded t1
     case e2 of
-      Nothing -> return (subs1, NamedType "" [])
-      Just e2 -> do
-        let env' = TE $ M.insert var (generalize (apply subs1 te) type1) env
-        (subs2, type2) <- infer env' e2
-        return (subs2 • subs1, type2)
+      Nothing -> return $ tuple []
+      Just e2 -> infer e2
   If c t f -> do
-    (cSubs, cType) <- infer te c
-    cSubs'         <- cType `unify` bool
-    (tSubs, tType) <- infer (apply (cSubs' • cSubs) te) t
-    (fSubs, fType) <- infer (apply (tSubs • cSubs' • cSubs) te) f
-    finalSubs      <- tType `unify` fType
-    return (finalSubs • fSubs • tSubs • cSubs' • cSubs, tType)
-  c@(Case e matches) -> infer te $ caseToLambda c
+    cType <- infer c
+    cType `unify` bool
+    tType <- infer t
+    fType <- infer f
+    tType `unify` fType
+    return tType
+  _ -> error $ "What's this? " ++ show expr
+  where pushEnvWith name typ = pushEnv >> addToEnv name typ
+        addToEnv name typ = do
+          ((TE env):envs, used) <- get
+          put ((TE $ M.insert name typ env):envs, used)
+        pushEnv = get >>= \(envs, used) -> put (TE M.empty:envs, used)
+        unify t1 t2 = case (t1, t2) of
+          (TypeVar a, t) -> substitute a t
+          (t, TypeVar a) -> substitute a t
+          (a :=> b, c :=> d) -> unify a c >> unify b d
+          (NamedType n ts, NamedType n' ts') | n == n' ->
+            mapM_ (uncurry unify) (zip ts ts')
+          (_,_) -> error $ "Types don't unify: " ++ r t1 ++ " !: " ++ r t2
+          where r = render 0
+        popEnv = get >>= \(_:envs, used) -> put (envs, used)
+        getEnvs = get >>= \(envs, _) -> return envs
+        getTypeOf name = do
+          envs <- getEnvs
+          lookup envs where
+            lookup [] = error $ "Type of " ++ name ++ " is unknown"
+            lookup (TE env:envs) =
+              case M.lookup name env of
+                Just typ -> instantiate typ
+                Nothing -> lookup envs
+        substitute name typ = do
+          (env:envs, used) <- get
+          put (apply (M.singleton name typ) <$> env: envs, used)
 
-unify :: Type -> Type -> TypeChecker Substitutions
-unify a b = do
-  case (a,b) of
-    (l :=> r, l' :=> r') -> do
-      s1 <- l `unify` l'
-      s2 <- apply s1 r `unify` apply s1 r'
-      return (s1 • s2)
-    (TypeVar u, t) -> u `bind` t
-    (t, TypeVar u) -> u `bind` t
-    (NamedType n ts, NamedType n' ts')
-      | n == n' -> do
-        subList <- mapM (uncurry unify) (zip ts ts')
-        return (foldl' (•) none subList)
-      | otherwise -> error $ "Named type mismatch: " ++ n ++ " !: " ++ n'
-    (t1, t2) -> error $ "types do not unify: " ++ show t1 ++ " !: " ++ show t2
-  where
-    bind name typ | typ == TypeVar name = return none
-                  | name `S.member` free typ = error $
-                      "Error: " ++ name ++ " occurs free in type " ++ show typ
-                  | otherwise = return (M.singleton name typ)
 
-
-initials = TE $ M.fromList
+initials = [TE $ M.fromList
   [
-    --("+", lit $ num :=> num :=> num),
+    ("+", lit $ num :=> num :=> num),
     --("-", lit $ num :=> num :=> num),
     --("*", lit $ num :=> num :=> num),
     --("/", lit $ num :=> num :=> num),
@@ -144,7 +158,7 @@ initials = TE $ M.fromList
     ("Empty", witha $ n "List" [a]),
     ("::", witha $ a :=> n "List" [a] :=> n "List" [a]),
     ("undefined", witha a)
-  ]
+  ]]
   where lit = Scheme []
         witha = Scheme ["a"]
         a = TypeVar "a"
@@ -153,8 +167,8 @@ initials = TE $ M.fromList
 
 prnt :: String -> TypeChecker ()
 prnt = lift . putStrLn
-runInfer = infer initials ~> flip runStateT (S.singleton "a")
+runInfer = infer ~> flip runStateT (initials, S.singleton "a")
 test input = do
-  ((subs, typ), used) <- input ! grab ! symsToVars ! runInfer
-  putStrLn $ input ++ "\nis of type\n" ++ show typ
-  print ((subs, typ), used)
+  (typ, env) <- input ! grab ! desugar ! runInfer
+  putStrLn $ input ++ "\nis of type\n" ++ render 0 typ
+  print (typ, env)

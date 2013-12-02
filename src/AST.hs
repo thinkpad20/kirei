@@ -5,8 +5,7 @@ module AST (Expr(..),
             Matches,
             prettyExpr,
             InString(..),
-            symsToVars,
-            caseToLambda) where
+            desugar) where
 
 import Common
 import Types
@@ -94,6 +93,7 @@ symsToVars expr = case expr of
   List (ListLiteral l) -> List (ListLiteral $ map symsToVars l)
   List (ListRange a b) -> List (ListRange (symsToVars a) (symsToVars b))
   Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ symsToVars e)
+  Sig name typ (Just next) -> Sig name typ (Just $ symsToVars next)
   e -> e
 
 caseToLambda :: Expr -> Expr
@@ -103,3 +103,24 @@ caseToLambda expr = case expr of
     compile _ [] = Var "__matchError__"
     compile e ((p,r):ms) =
       Apply (Apply (Symbol "[-]") (Apply (Lambda p r) e)) (compile e ms)
+
+desugarList :: Expr -> Expr
+desugarList (List lit) = ds lit where
+  ds (ListLiteral []) = Var "Empty"
+  ds (ListLiteral (e:es)) = Apply (Apply (Symbol "::") e) (ds (ListLiteral es))
+  ds (ListRange start stop) = error $ "Can't handle list range yet"
+desugarList (If c t f) = If (desugarList c) (desugarList t) (desugarList f)
+desugarList (Apply a b) = Apply (desugarList a) (desugarList b)
+desugarList (Comma a b) = Comma (desugarList a) (desugarList b)
+desugarList (Dotted a b) = Dotted (desugarList a) (desugarList b)
+desugarList (Case e ms) = Case (desugarList e)
+  (map (\(a, b) -> (desugarList a, desugarList b)) ms)
+desugarList (Lambda pat e) = Lambda (desugarList pat) (desugarList e)
+desugarList (Tuple es) = Tuple (map desugarList es)
+desugarList (Let name e Nothing) = Let name (desugarList e) Nothing
+desugarList (Let name e1 (Just e2)) = Let name (desugarList e1) (Just $ desugarList e2)
+desugarList (Datatype n ns cs (Just e)) = Datatype n ns cs (Just $ desugarList e)
+desugarList e = e
+
+desugar :: Expr -> Expr
+desugar = desugarList ~> symsToVars
