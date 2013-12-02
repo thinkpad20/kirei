@@ -1,7 +1,6 @@
 module AST (Expr(..),
             ListLiteral(..),
             Constructor(..),
-            TypeName(..),
             Name,
             Matches,
             prettyExpr,
@@ -10,13 +9,12 @@ module AST (Expr(..),
             caseToLambda) where
 
 import Common
+import Types
 import qualified Data.Map as M
 
 type Matches = [(Expr, Expr)]
 
-data TypeName = TypeName Name [TypeName] deriving (Show, Ord, Eq)
-
-data Constructor = Constructor Name [TypeName] deriving (Show, Ord, Eq)
+data Constructor = Constructor Name [Type] deriving (Show, Ord, Eq)
 
 data Expr =
   Bool Bool
@@ -26,7 +24,7 @@ data Expr =
   | Var Name
   | Underscore
   | If Expr Expr Expr
-  | Let Name Expr (Maybe Expr)
+  | Let Name (Maybe Type) Expr (Maybe Expr)
   | Apply Expr Expr
   | Dotted Expr Expr
   | Comma Expr Expr
@@ -35,7 +33,7 @@ data Expr =
   | Lambda Expr Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
-  | Sig Name TypeName
+  | Sig Name Type (Maybe Expr)
   deriving (Show, Eq, Ord)
 
 data ListLiteral =
@@ -53,7 +51,7 @@ prettyExpr e = case e of
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
-  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
+  Let n mt e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
     Nothing -> ""
     Just e2 -> prettyExpr e2)
   Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
@@ -67,6 +65,9 @@ prettyExpr e = case e of
   List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
   List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++
                                     prettyExpr stop ++ "]"
+  Sig name typ e -> "sig " ++ name ++ " : " ++ show typ ++ "; " ++ (case e of
+    Nothing -> ""
+    Just e2 -> prettyExpr e2)
 
 data InString =
   Plain String
@@ -82,8 +83,8 @@ symsToVars :: Expr -> Expr
 symsToVars expr = case expr of
   Symbol s -> Var s
   If c t f -> If (symsToVars c) (symsToVars t) (symsToVars f)
-  Let name e Nothing -> Let name (symsToVars e) Nothing
-  Let name e (Just e') -> Let name (symsToVars e) (Just (symsToVars e'))
+  Let name mt e Nothing -> Let name mt (symsToVars e) Nothing
+  Let name mt e (Just e') -> Let name mt (symsToVars e) (Just (symsToVars e'))
   Apply a b -> Apply (symsToVars a) (symsToVars b)
   Dotted a b -> Dotted (symsToVars a) (symsToVars b)
   Comma a b -> Comma (symsToVars a) (symsToVars b)

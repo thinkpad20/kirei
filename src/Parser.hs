@@ -7,6 +7,8 @@ import Data.Monoid
 import Debug.Trace
 import Common
 import AST
+import Types
+import Data.Char (isLower)
 
 skip :: Parser ()
 skip = spaces *> (blockCom <|> lineComment <|> spaces) where
@@ -153,9 +155,6 @@ pDatatype :: Parser Expr
 pDatatype = Datatype <$ keyword "datatype" <*> pVariable <*> many pVariable
                      <* keysim "=" <*> pConstructors
                      <* keysim ";" <*> optionMaybe pExprs where
-  pSingleTypeName = TypeName <$> pVariable <*> pure []
-  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
-                              <*> many pSingleTypeName <* schar ')'
   pConstructor = do
     name <- pVariable
     argumentTypes <- many pType
@@ -230,72 +229,24 @@ pLambda = do
     lambda [] e = e
     lambda (v:vs) e = Lambda (Var v) (lambda vs e)
 
--- | Extended let - handles a more general case which gets compiled down into
--- a regular set statement down the line
-pExtendedLet :: Parser Expr
-pExtendedLet = do
-  keyword "let"
-  matches <- sepBy1 getPattern (keysim "|")
-  keysim ";"
-  next <- optionMaybe pExprs
-  case matches of
-    -- with a single solitary pattern, we don't need a case
-    -- statement, just its arguments, name and body
-    [p] -> do
-      let (name, args, body) = (getName p, getArgs $ fst p, getBody p)
-      return $ Let name (f args body) next
-    ps -> do
-      let matches = zip (getLeft <$> ps) (getRight <$> ps)
-          name :: Name
-          name = getName $ head ps
-          arg = "__arg"
-          allSame = and $ map (== name) (getName <$> tail ps)
-      if allSame then
-        return $ Let name (Lambda (Var arg) $ Case (Var arg) matches) next
-        else error $ "Some patterns don't conform"
-  where
-    getPattern = pure (,) <*> pExpr <* keysim "=" <*> pExprs
-    -- gets the name of the function out of a pattern
-    getName (Var n, _) = n
-    getName (Symbol s, _) = s
-    getName (Apply a b, e) = getName (a, e)
-    getName p = error $ "Invalid pattern: " ++ show p
-    getArgs (Var n) = []
-    getArgs (Symbol s) = []
-    getArgs (Apply a b) = getArgs a ++ getArgs b
-    --getArgs (Tuple es) = getArgs <$> es
-    getBody = undefined
-    getLeft = undefined
-    getRight = undefined
-    f [] e = e
-    f (a:as) e = Lambda (Var a) (f as e)
-
 -- Kinda hacky, needs to be fixed
 pLet :: Parser Expr
-pLet = do
-  keyword "let"
-  pattern <- pExpr
-  keysim "="
-  body <- pExprs
-  keysim ";"
-  next <- optionMaybe pExprs
-  return $ Let (head $ args pattern) (f (tail $ args pattern) body) next where
-    args p = case p of
-      Var v -> [v]
-      Symbol s -> [s]
-      Apply a b -> args a ++ args b
-      _ -> error $ "Illegal pattern " ++ show p
-    f [] e = e
-    f (a:as) e = Lambda (Var a) (f as e)
+pLet = Let <$ keyword "let" <*> (pVariable <|> pSymbol)
+           <*> optionMaybe (keysim ":" *> pType)
+           <*  keysim "=" <*> pExprs <* keysim ";"
+           <*> optionMaybe pExprs
 
 pSig :: Parser Expr
 pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
-           <* keysim ":" <*> pType <* keysim ";"
+           <* keysim ":" <*> pType <* keysim ";" <*> optionMaybe pExprs
 
-pType = pSingleTypeName <|> pComplexTypeName where
-  pSingleTypeName = TypeName <$> pVariable <*> pure []
-  pComplexTypeName = TypeName <$ schar '(' <*> pVariable
-                            <*> many pSingleTypeName <* schar ')'
+pType :: Parser Type
+pType = chainr1 pType' (keysim "->" *> pure (:=>)) where
+    pType' = between (schar '(') (schar ')') pType <|> do
+      name <- pVariable
+      if isLower (head name) then return $ TypeVar name else do
+        subTypes <- many pType'
+        return $ NamedType name subTypes
 
 pExpr :: Parser Expr
 pExpr = choice [pIf, pLet, pDatatype, pBinary precedences]
