@@ -1,8 +1,9 @@
 module Types (Type(..),
               Scheme(..),
               Types(..),
-              TypeEnvironment(..),
-              Substitutions) where
+              TypeMap(..),
+              Substitutions,
+              num, bool, str, tuple) where
 
 import Common
 import qualified Data.Map as M
@@ -26,10 +27,10 @@ instance Render Type where
     NamedType "" ts -> "(" ++ intercalate ", " (map (render 0) ts) ++ ")"
     NamedType name [] -> name
     NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
-    t1 :=> t2 -> show' t1 ++ " -> " ++ show t2
-    where show' t@(NamedType (_:_) (_:_)) = "(" ++ show t ++ ")"
-          show' t@(a :=> b) = "(" ++ show t ++ ")"
-          show' t = show t
+    t1 :=> t2 -> show' t1 ++ " -> " ++ render 0 t2
+    where show' t@(NamedType (_:_) (_:_)) = "(" ++ render 0 t ++ ")"
+          show' t@(a :=> b) = "(" ++ render 0 t ++ ")"
+          show' t = render 0 t
 
 data Scheme = Scheme [Name] Type
 type Substitutions = M.Map Name Type
@@ -52,22 +53,27 @@ instance Types Scheme where
   apply subs (Scheme vars t) =
     Scheme vars (apply (foldr M.delete subs vars) t)
 
-data TypeEnvironment = TE (M.Map Name Scheme)
+data TypeMap = TM (M.Map Name Type)
 
-instance Types TypeEnvironment where
-  free (TE env) = unionAll (free <$> M.elems env)
-  apply subs (TE env) = TE $ apply subs <$> env
+instance Types TypeMap where
+  free (TM env) = unionAll (free <$> M.elems env)
+  apply subs (TM env) = TM $ apply subs <$> env
 
-instance Show TypeEnvironment where
-  show (TE env) = let
-    pairs = M.toList env
-    toS (key, val) = show key ++ " => " ++ show val
-    in "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
+instance Show TypeMap where
+  show (TM env) = "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
+    where
+      pairs = M.toList env
+      toS (key, val) = show key ++ " => " ++ render 0 val
 
 instance Show Scheme where
   show (Scheme vars t) = loop vars where
-    loop [] = show t
+    loop [] = render 0 t
     loop (v:vs) = "∀" ++ v ++ "." ++ loop vs
 
 
 unionAll = foldl' S.union S.empty
+
+num  = NamedType "Number" []
+str  = NamedType "String" []
+bool = NamedType "Bool" []
+tuple = NamedType ""

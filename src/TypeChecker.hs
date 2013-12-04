@@ -50,7 +50,7 @@ infer expr = case expr of
   Number _ -> return num
   String _ -> return str
   Bool   _ -> return bool
-  Var    x -> getTypeOf x >>= \t' -> return t'
+  Var    x -> getTypeOf x
   Tuple exprs -> do
     tuple <$> mapM infer exprs
   Lambda (Var x) e  -> do
@@ -70,13 +70,32 @@ infer expr = case expr of
       [1..10] : [Number], so a is a Number, and f : (Number -> b). Then
       \f -> map f [1..10] : (Number -> b) -> [b]
       We can tell this by a series of specializations.
-      What that means then is we start by saying f : newvar (let's say x)
+      What that means then is we start by saying f : newvar (let's say "x")
       Then we apply map to f so we get (a -> b) -> ... from that inferrence,
       then we unify (a -> b) with x, so f : (a -> b) (of course it still has a
       and b in its scheme). In the next step we apply (map f) to [1..10] and
       (map f) has the type [a] -> [b], so we unify [a] with [Number] which means
       a is Number, which means all `a`s in the current scope can be collapsed to
       Number, so f : Number -> b (only b in its scheme now), and we return a [b].
+
+      f : \/x.x
+      map : \/a b. (a->b) -> [a] -> [b]
+      [1,2,3] -> [Number]
+      apply map f [1,2,3]
+        -> infer (map f)
+          -> apply map f
+            -> infer (map)
+              -> lookup, find \/a b. (a->b) -> [a] -> [b]
+                -> instantiate, get (a' -> b') -> [a'] -> [b']
+                -> return (a' -> b') -> [a'] -> [b']
+            map is a -> b where a : (a' -> b') and b : ([a'] -> [b'])
+            -> infer (f)
+              -> lookup, find \/x. x
+                -> instantiate, get x'
+                -> return x'
+            unify (a' -> b') with x'
+              -> x' is a typevar, so update environment, replacing x's with (a' -> b')
+              -> problem: there is no x' in our environment, only x.x
     -}
     t@(TypeVar name) <- newvar
     pushEnvWith x (Scheme [name] t)
@@ -91,10 +110,13 @@ infer expr = case expr of
       Just e -> infer e
   Apply e1 e2 -> do
     t1 <- infer e1
+    prnt $ "inferred t1 to be " ++ show t1
     case t1 of
       a :=> b -> do
         t2 <- infer e2
+        prnt $ "inferred t2 to be " ++ show t2
         unify a t2
+        prnt $ "type of " ++ show expr ++ " to be " ++ show b
         return b
       otherwise -> error $ "Expression `" ++ show e1 ++ "` is not a function"
   Let var e1 e2 -> do
@@ -127,13 +149,14 @@ infer expr = case expr of
           where r = render 0
         popEnv = get >>= \(_:envs, used) -> put (envs, used)
         getEnvs = get >>= \(envs, _) -> return envs
-        getTypeOf name = do
+        getTypeOf name = getTypeOf' name >>= instantiate
+        getTypeOf' name = do
           envs <- getEnvs
-          lookup envs where
+          return $ lookup envs where
             lookup [] = error $ "Type of " ++ name ++ " is unknown"
             lookup (TE env:envs) =
               case M.lookup name env of
-                Just typ -> instantiate typ
+                Just typ -> typ
                 Nothing -> lookup envs
         substitute name typ = do
           (env:envs, used) <- get
@@ -142,7 +165,7 @@ infer expr = case expr of
 
 initials = [TE $ M.fromList
   [
-    ("+", lit $ num :=> num :=> num),
+    ("+", lit $ num :=> num :=> num)
     --("-", lit $ num :=> num :=> num),
     --("*", lit $ num :=> num :=> num),
     --("/", lit $ num :=> num :=> num),
@@ -153,11 +176,11 @@ initials = [TE $ M.fromList
     --("&&", lit $ bool :=> bool :=> bool),
     --("not", lit $ bool :=> bool),
     --("__matchFail__", witha a),
-    ("__matchError__", witha a),
-    ("[-]", witha $ a :=> a :=> a),
-    ("Empty", witha $ n "List" [a]),
-    ("::", witha $ a :=> n "List" [a] :=> n "List" [a]),
-    ("undefined", witha a)
+    --("__matchError__", witha a),
+    --("[-]", witha $ a :=> a :=> a),
+    --("Empty", witha $ n "List" [a]),
+    --("::", witha $ a :=> n "List" [a] :=> n "List" [a]),
+    --("undefined", witha a)
   ]]
   where lit = Scheme []
         witha = Scheme ["a"]
@@ -171,4 +194,4 @@ runInfer = infer ~> flip runStateT (initials, S.singleton "a")
 test input = do
   (typ, env) <- input ! grab ! desugar ! runInfer
   putStrLn $ input ++ "\nis of type\n" ++ render 0 typ
-  print (typ, env)
+  putStrLn $ render 0 typ ++ ", " ++ render 0 env
