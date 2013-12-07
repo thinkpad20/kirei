@@ -9,11 +9,14 @@ module Common ((~>),
                intercalate,
                Name,
                foldl',
+               foldr,
                Render(..)) where
 
+import Prelude hiding (foldl', foldr)
+import Data.Foldable (foldl', foldr)
 import Data.List (intercalate)
 import Control.Applicative
-import Data.List (foldl')
+import qualified Data.Set as S
 
 (~>) = flip (.)
 infixr 9 ~>

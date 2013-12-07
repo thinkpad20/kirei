@@ -1,0 +1,124 @@
+// base "function" aka let (in this case a module, implicitly or otherwise)
+
+base map: {False: Bool, negate: Number -> Number}
+
+let foo = 1;
+
+// push {foo:a}, {a: {}}
+// infer 1 -> Number
+// assertCompatible (a, Number) //OK
+// pop
+// store foo : Number
+
+// base map now contains {False: Bool, negate: Number -> Number, foo: Number}
+
+let bar : Bool = False;
+
+// push {bar : Bool}
+// infer False -> Bool
+// assertCompatible (Bool, Bool) //OK
+// pop
+// store bar : Bool
+
+// base map now contains {False: Bool, negate: Number -> Number, foo: Number, bar: Bool}
+
+let baz = \x -> negate x;
+
+// push {baz: a}, {a: {}}
+// infer \x -> negate x;
+  // push {x: b}, {b: {}}
+  // infer negate x
+    // infer function (negate)
+      // lookup gives Number -> Number
+      // instantiate (but it doesn't matter)
+      // store negate : Number -> Number
+      // return Number -> Number
+    // infer arg (x)
+      // lookup gives b
+      // in scope, no instantiation
+      // return b
+    // restrict type of arg to be type of param of function
+      // restrict b to be Number
+      // env now has {x: b, negate: Number -> Number}, {b: Number}
+    // return return type of function
+      // return Number
+  // return b -> Number
+  // refine b -> Number, becomes Number -> Number
+  // pop
+// inferrence returned Number -> Number
+// assertCombatible (a, Number -> Number) // OK
+// pop
+// store baz : Number -> Number
+
+// base map now contains {False: Bool, negate: Number -> Number, foo: Number, bar: Bool, baz: Number -> Number}
+
+let id = \x -> x;
+
+// push {id: a}, {a: {}}
+// infer \x -> x;
+  // push {x: b}, {b: {}}
+  // infer x;
+    // lookup x => x: b
+    // return b
+  // pop
+  // return b -> b
+// assertCompatible (a, b -> b) // OK
+// pop
+// store id : b -> b // at this step we could get all of the unique type variables and assign them new names starting with a, so id : a -> a
+
+// base map now contains {False: Bool, negate: Number -> Number, foo: Number, bar: Bool, baz: Number -> Number, id: a -> a}
+
+let id' = \x -> id x;
+
+// push {id': a}, {a: {}}
+// infer \x -> id x;
+  // push {x: b}, {b: {}}
+  // infer id x;
+    // infer function (id)
+      // lookup gives a -> a
+      // instantiate, have c -> c
+      // store id : c -> c
+      // return c -> c
+    // infer arg (x)
+      // lookup gives b
+      // in scope, no instantiation
+      // return b
+    // restrict type of arg to be type of param of function
+      // restrict b to be c
+      // env now has {x: b, id: c -> c}, {b: c}
+    // return return type of function
+      // return c
+  // got c
+  // this lambda must have type (type of arg) -> (type of return)
+  // which means (type of x) -> (type of id x)
+  // which means b -> c
+  // return b -> c
+// applySubs b -> c gives c -> c
+// pop
+// store id' : c -> c
+
+// base map now contains {False: Bool, negate: Number -> Number, foo: Number, bar: Bool, baz: Number -> Number, id: a -> a, id': a -> a}
+
+key point, how to we tell variables which are still "in flux" vs those which are "fixed"? We need a way to distinguish those which are still being defined.
+
+let bar = 4;
+// push {bar:a}, {a:{}}
+// infer 4
+  // Number
+// assertCompatible (a, Number)
+// store bar : Number
+
+let foo = let bar = 2; bar + 3;
+
+//push {foo:a}, {a:{}}
+//infer let bar = 2; bar + 3;
+  // push {bar:b}, {b:{}}
+  // infer 2
+    // Number
+  // ac b Number
+  // store bar Number
+// infer bar + 3;
+// infer (bar +)
+  // infer bar
+    // lookup bar -> fixed Number
+

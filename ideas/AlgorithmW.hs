@@ -49,8 +49,8 @@ type Substitutions = M.Map String Type
 noSubstitutions :: Substitutions
 noSubstitutions = M.empty
 
-(=>=) :: Substitutions -> Substitutions -> Substitutions
-s1 =>= s2 = (applySub s1 <$> s2) `M.union` s1
+(•) :: Substitutions -> Substitutions -> Substitutions
+s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 
 remove :: TypeEnv -> Name -> TypeEnv
 remove (TypeEnv env) var = TypeEnv (M.delete var env)
@@ -76,8 +76,7 @@ data InferrerState =
 
 
 
-type Inferrer a =
-  ErrorT String (ReaderT InferrerEnv (StateT InferrerState IO)) a
+type Inferrer = ErrorT String (ReaderT InferrerEnv (StateT InferrerState IO))
 
 runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
 runInferrer t =
@@ -114,7 +113,7 @@ a `unify` b = do
     (l :=> r, l' :=> r') -> do
       s1 <- l `unify` l'
       s2 <- applySub s1 r `unify` applySub s1 r'
-      return (s1 =>= s2)
+      return (s1 • s2)
     (TVar u, t) -> u `bind` t
     (t, TVar u) -> u `bind` t
     (NumberType, NumberType) -> return noSubstitutions
@@ -125,8 +124,7 @@ a `unify` b = do
     bind name typ | typ == TVar name = return noSubstitutions
                   | name `S.member` free typ = throwError $
                       "Error: " ++ name ++ " occurs free in type " ++ show typ
-                  | otherwise = do
-                    return (M.singleton name typ)
+                  | otherwise = return (M.singleton name typ)
 
 infer :: TypeEnv -> Expr -> Inferrer (Substitutions, Type)
 infer env@(TypeEnv tenv) expr = case expr of
@@ -137,7 +135,7 @@ infer env@(TypeEnv tenv) expr = case expr of
   Symbol s -> infer env (Var s)
   Var n -> case M.lookup n tenv of
     Nothing -> throwError $ "Unknown variable: " ++ n
-    Just sigma -> noSubs =<< instantiate sigma
+    Just sigma -> instantiate sigma >>= noSubs
   Lambda param body -> do
     paramT <- newTypeVar "a"
     -- set the param variable to point to this new type
@@ -150,7 +148,7 @@ infer env@(TypeEnv tenv) expr = case expr of
     (s1, t1) <- infer env e1
     (s2, t2) <- infer (applySub s1 env) e2
     s3 <- unify (applySub s2 t1) (t2 :=> tv)
-    return (s3 =>= s2 =>= s1, applySub s3 tv)
+    return (s3 • s2 • s1, applySub s3 tv)
   Let var expr next -> do
     (exprSubs, exprT) <- infer env expr
     -- remove any existing association this variable has
@@ -164,13 +162,13 @@ infer env@(TypeEnv tenv) expr = case expr of
         -- apply whatever substitutions were produced from evaluating `expr`,
         -- infer the next guy, and compose their substitutions
         (nextSubs, nextT) <- infer (applySub exprSubs env'') next
-        return (exprSubs =>= nextSubs, nextT)
+        return (exprSubs • nextSubs, nextT)
   If c t f -> do
     (s1, condT) <- infer env c
     (s2, trueT) <- infer (applySub s1 env) t
-    (s3, falseT) <- infer (applySub (s1 =>= s2) env) f
+    (s3, falseT) <- infer (applySub (s1 • s2) env) f
     s4 <- unify trueT falseT
-    return (s1 =>= s2 =>= s3 =>= s4, falseT)
+    return (s1 • s2 • s3 • s4, falseT)
 
   where noSubs t = return (noSubstitutions, t)
 
@@ -233,6 +231,10 @@ prPolytype (Polytype vars t) = case vars of
             (PP.punctuate PP.comma (map PP.text vars))
             PP.<> PP.text "." PP.<+> prType t
 
+
+{-----------------------------------------------------------------------
+                            alternate models
+------------------------------------------------------------------------}
 
 test' :: Expr -> IO ()
 test' e = do

@@ -1,0 +1,194 @@
+High-level idea for type checking
+
+In any lambda we have a mapping from expression variables to type variables, and type variables to restrictions. These restrictions are scoped for the lambda expression and apply to anything which is defined in that scope.
+
+Ex:
+let foo = \f. map f [1,2,3]; foo;
+
+we evaluate the lambda first; this means we push `f` into the symbol table with type `a`, and add `a` to the restrictions table with no restrictions:
+
+Symbols        Restrictions
+f : a          a : {}
+
+We have an application of `map` to `f`, so we bring `map` into the current scope, giving it new type variables when necessary
+
+Symbols                        Restrictions
+f : a                          a: {}
+map : (b -> c) -> [b] -> [c]   b: {}
+                               c: {}
+
+Where `{}` stands for "no restrictions"
+
+Then we unify f's type with map's argument's type. This is `(b->c)` so we have a restriction that `a : b -> c`
+
+Symbols                        Restrictions
+f : a                          a: b -> c
+map : (b -> c) -> [b] -> [c]   b: {}
+                               c: {}
+
+Finally the result of `map f` is `[b] -> [c]` which is still valid. Next we need to get the type of [1,2,3]. Clearly this is [Number]. That means that we need to unify [b] with [Number], which means we need to restrict `b`.
+
+Symbols                        Restrictions
+f : a                          a: b -> c
+map : (b -> c) -> [b] -> [c]   b: Number
+                               c: {}
+
+This means the result of the lambda is `[c]`. The type of a lambda is `(argument type) -> (result type)`, which is `(type of f) -> [c]`. Now we get `f : a` but first we need to evaluate its restrictions. Restrictions of `a` are `b -> c`. Go through and restrict those, so we get `Number -> c`. That's our type: `foo : (Number -> c) -> [c]`. Yay!
+
+Also note as soon as we're finished calculating the lambda we can free the unneeded variables, namely `a` and `b`.
+
+What about constructing the infinite type?
+
+Ex:
+\x. x x
+
+We inject x in with a new type `a`
+
+Symbols                     Restrictions
+x : a                       a: {}
+
+Then we need to apply `x` to `x`. We bring `x` into the scope (again? no, we can't do duplicates). Never mind. We need to restrict `a` to be a function from `a` to `b`:
+
+Symbols                     Restrictions
+x : a                       a: a -> b
+
+But we can see right now that we have a cycle in our restrictions, and we throw an error.
+
+\begin{code}
+import Common
+import Types
+import AST
+import qualified Data.Map as M
+import qualified Data.Set as S
+
+type TypeChecker = StateT ([TypeMap], [Restrictions], BoundVars) IO
+newtype TypeMap = TM (M.Map Name Type)
+type BoundVars = S.Set Name
+newtype Restriction = R (Maybe Type)
+newtype Restrictions = Rs (M.Map Name Restriction)
+
+none :: Restriction
+none = R Nothing
+
+restrict :: Type -> Type -> TypeChecker ()
+restrict name t = if t `contains` name then error "Occurs check failed"
+  else addRestriction name (Just t)
+  where TypeVar name `contains` n = name == n
+        a :=> b `contains` n = a `contains` n || b `contains` n
+        NamedType _ ts = or $ map (`contains` n) ts
+
+getRestrictions = get >>= \(_, rs, _) -> return rs
+putRestrictions newRs = do
+  (tms, Rs rs, bnd) <- get
+  put (tms, Rs (rs `M.union` newRs), bnd)
+
+addRestriction name t = putRestrictions $ M.singleton name t
+
+\end{code}
+
+We need to keep track of which variables are currently bound and which are
+free. This also suggests a stack, though, since
+$$let bar = \x -> let bar = \x -> x + 1; bar x;$$
+should be scoped properly (i.e. x is bound, then x is bound again, then x
+is unbound but the first x is still there). So, we're not quite out of the
+woods yet...
+
+\begin{code}
+getBoundVars = get >>= \(_, _, bnd) -> return bnd
+addBoundVar name = do
+  (tms, rs, bnd) <- get
+  put (tms, rs, S.insert name bnd)
+
+
+isUsed :: Name -> TypeChecker Bool
+isUsed name = getTypeMap >>= \(TM mp) -> return (name `M.member` mp)
+
+infer :: Expr -> TypeChecker Type
+infer expr = case expr of
+  Number _ -> num
+  String _ -> str
+  Bool   _ -> bool
+  Var var -> getTypeOf var
+  Lambda name e -> do
+    setUpNewVar name
+    resultT <- infer e
+    paramT <- getTypeOf name
+    return (paramT :=> resultT)
+  Apply a b -> do
+    aType <- infer a
+    bType <- infer b
+    case aType of
+      (t1 :=> t2) -> unify bType t1 >> return t2
+      otherwise   -> error $ "not a function"
+  Let name e next -> do
+    setUpNewVar name
+    eType <- infer e
+    addMapping name eType
+    case next of
+      Nothing -> return $ tuple []
+      Just next -> infer next
+  where
+    setUpNewVar name = do
+      v@(TypeVar var) <- newvar
+      addSymbol name v
+      addRestriction var Nothing
+
+-- | newvar generates a fresh type variable, not currently in use.
+newvar :: TypeChecker Type
+newvar = undefined
+
+\end{code}
+
+$isBound$ checks if a variable is currently bound (i.e. appearing on the
+left side of a lambda expression)
+
+\begin{code}
+isBound name = getBoundVars >>= \bnd -> return $ name `S.member` bnd
+\end{code}
+
+getTypeOf searches our current scope for a variable and returns its
+instantiated type.
+KEY POINT: scoping. If the variable is currently bound, we don't want to
+instantiate it. for example in $\x -> foo x$, $x$ is given a new type $a$,
+then when we do a lookup for $x$, we don't want to instantiate it (this
+would produce a new, incorrect type)
+
+\begin{code}
+getTypeOf name = do
+  (SymTable syms) <- getSymbols
+  case M.lookup name syms of
+    Nothing -> error $ name ++ "not defined"
+    Just typ -> isBound name >>= \case
+      True -> return typ
+      False -> instantiate typ
+  where
+    -- instantiating just means making sure that any type variables
+    -- this type introduces are unique. If we already have a variable `x`
+    -- of type `a`, and `foo` is type `a -> b`, we don't want there to
+    -- be any confusion with the types of `x` and `foo`.
+    instantiate :: Type -> TypeChecker Type
+    instantiate t = do
+      -- find all the type variables vars and make a new one if they're used
+      subs <- mapM newName (getVars t)
+      return (apply subs t)
+      where
+        -- getVars will find all of the type variables in a given type.
+        getVars :: Type -> S.Set Name
+        getVars (TypeVar name) = S.singleton name
+        getVars (a :=> b) = getVars a <> getVars b
+        getVars (NamedType ts) = mconcat $ map getVars ts
+        -- newName will create a new name for it -- the same one if it's not
+        -- already being used.
+        newName :: Name -> TypeChecker (Name, Name)
+        newName name = isUsed name >>= \case
+          True -> newvar >>= \new -> return (name, new)
+          False -> return (name, name)
+        -- apply looks all type variables up in a map and gives them
+        -- their replacements
+        apply :: M.Map Name Name -> Type -> Type
+        apply mp t = case t of
+          TypeVar v -> let Just v' = M.lookup v mp in TypeVar v'
+          a :=> b   -> apply mp a :=> apply mp b
+          NamedType n ts -> NamedType n (apply mp <$> ts)
+
+\end{code}

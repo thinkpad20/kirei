@@ -12,7 +12,7 @@ import Parser
 import qualified Data.Map as M
 import qualified Data.Set as S
 
-type TypeChecker = StateT [(TypeMap, Restrictions)] IO
+type TypeChecker = StateT [(TypeMap, TypeMap, Restrictions)] IO
 type BoundVars = S.Set Name
 newtype Restrictions = Rs (M.Map Name Type) deriving (Show)
 
@@ -20,16 +20,16 @@ instance Render Restrictions where
   render _ = show
 
 getRestrictions :: TypeChecker Restrictions
-getRestrictions = get >>= \((_, rs):_) -> return rs
+getRestrictions = get >>= \((_, _, rs):_) -> return rs
 
 addRestriction :: Name -> Type -> TypeChecker ()
 addRestriction name t = do
-  (tms, Rs rs):rest <- get
+  (tm, ttm, Rs rs):rest <- get
   refined <- refineType t
   if name `S.member` getVars refined then
     error $ "Cycle in types: `" ++ name ++ "` to `" ++
       render 0 t ++ "` a.k.a. `" ++ render 0 refined ++ "`"
-    else put ((tms, Rs $ M.insert name t rs):rest)
+    else put ((tm, ttm, Rs $ M.insert name t rs):rest)
 
 getTypeMap :: TypeChecker TypeMap
 getTypeMap = get >>= \((tm, _):_) -> return tm
@@ -64,22 +64,17 @@ infer expr = case expr of
     aType <- infer a
     bType <- infer b
     case aType of
-      (t1 :=> t2) -> unify bType t1 >> return t2
+      (t1 :=> t2) -> unify bType t1 >> refineType t2
       (TypeVar _) -> do
         v <- newvar
+        prnt $ "unifying " ++ show aType ++ ", " ++ show (bType :=> v)
         unify aType (bType :=> v)
-        return v
+        refineType v
       otherwise   -> error $ show a ++ " is not a function"
   Let name e next -> do
-    pushWithNew name
-    env <- get
-    prnt $ "just pushed a new env " ++ show env
+    pushEnv
     eType <- infer e
-    env <- get
-    prnt $ "about to pop env " ++ show env
     popEnv
-    env <- get
-    prnt $ "popped env, env is now " ++ show env
     addMapping name eType
     case next of
       Nothing -> return $ tuple []

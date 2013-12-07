@@ -5,6 +5,7 @@ module Types (Type(..),
               Substitutions,
               num, bool, str, tuple) where
 
+import Prelude hiding (foldr)
 import Common
 import qualified Data.Map as M
 import qualified Data.Set as S
@@ -69,7 +70,6 @@ instance Show Scheme where
   show (Scheme vars t) = loop vars where
     loop [] = render 0 t
     loop (v:vs) = "∀" ++ v ++ "." ++ loop vs
-
 
 unionAll = foldl' S.union S.empty
 

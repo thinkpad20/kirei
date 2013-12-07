@@ -1,0 +1,100 @@
+A rather OOP approach to typing:
+
+Create a series of records, one for every variable in our program. These records can be continuously refined (specialized), in an update-like process. For example:
+
+import std;
+
+let map : (a -> b) -> [a] -> [b] = \f list ->
+  let m acc list = case list of [] -> [] | a::as -> m (f a :: acc) as;
+  m [] list;
+
+println (map (*7) [1..10]) $IO;
+
+Here are all of the variables we see here:
+
+map
+map.f
+map.list
+map.m
+map.m.acc
+map.m.list
+println
+$IO
+
+we add them to our dictionary as we encounter them, initially all with unknown variables
+
+map : a
+map.f : b
+map.list : c
+
+Then we have a `refine` process which takes a type and a new type, and refines the old one into the new unless they're incompatible. That refinement process will be side-effecty as it will also go and update the entire map.
+
+A `let` keyword introduces a new namespace. Inside of the same namespace, a type variable must always resolve to the same type. As in, if we have a variable of type [a], then a must be the same type throughout that namespace. Right? What about this?
+
+class Incr a =
+  sig incr : a -> a;
+
+Number implements Incr with
+  let incr n = n + 1;
+
+String implements Incr with
+  // something
+
+sig foo : (Number, String);
+let foo =
+  let bar x = incr x;
+  (bar 2, bar 'a');
+
+In Haskell that fails, but we can think about whether we want to support it. But more importantly how about this, which is OK in Haskell?
+
+let foo = let bar = id; (bar 1, bar 'a');
+
+Here id is specialized first to Number -> Number, and then to Char -> Char. This suggests we want to keep polymorphism as much as possible, even within the same namespace. In terms of the algorithm, we'd have
+
+id : a -> a
+foo : (Number, String)
+foo.bar : a -> a
+
+When we `let bar = id`, bar gets the type a -> a. Then we apply bar to 1, and it gets the type Number -> Number, but the original bar shouldn't be affected! This suggests a stack for applications. In effect we can have the application stack have all monotypes, and the general type match have type schemes. But do we want all monotypes?? What about functions which aren't completely specified? Like `map` above?
+
+let map : (a -> b) -> [a] -> [b] = \f list ->
+  let m acc list = case list of [] -> [] | a::as -> m (f a :: acc) as;
+  m [] list;
+
+map : (a -> b) -> [a] -> [b] // set by signature
+map.f : c // newvar'd
+      : a ->
+map.list : d // newvar'd
+
+map.m : e // newvar'd
+map.m.acc : f // newvar'd
+map.m.list : g // newvar'd
+           : List a // unified with [] => frees `g`
+map.m._case0.[] : List a // by signature
+map.m._case0.a  : g // newvar'd
+                : a // unified with (a -> List a ...) => frees `g`
+map.m._case0.:: : a -> List a -> List a // by signature
+map.m._case0.as : g // newvar'd
+                : List a // unified with List a => frees `g`
+
+then when this all collapses, m [] list had better be unifiable with (a -> b) -> [a] -> [b]!
+
+Stack-based applications:
+
+let id = \x -> x; id 'a' ++ show (id 1);
+initially empty -> ([], [])
+let comes up, id added with type a ([{id : a}], [])
+  -> eval \x -> x
+  lambda, x added with type b ([{id: a, x: b}], [])
+    -> eval body (x)
+    variable, lookup x -> \/b.b
+      -> instantiate \/b.b, get b back
+    returned b
+    generalize return, means \/b.b
+    type of lambda is (type of arg -> type of body = \/b.b)
+    type of arg is \/b.b so type of lambda is (\/b. b -> b)
+  returned \/b. b->b
+  unify a with \/b.b->b
+  return \/b.
+
+
