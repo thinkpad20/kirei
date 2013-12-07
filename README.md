@@ -344,13 +344,11 @@ A lot!
 
 * All symbolic operators are currently right-associative, which makes some things require parenthesis where they shouldn't. We currently lack the ability to specify these.
 * Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
-* No arrays or any builtin data structures (linked lists and maps are especially important)
-  - We do have tuples now, woo hoo!
-  - And now we have ADTs too, which means Lists! Although they need a little more work. We have a basic non-balanced BST now.
-* No type system yet (we plan to implement Hindley-Milner, or a modified version thereof)
-  - We have some a basic implementation of HM up and running, although it do much more than the pure lambda calculus yet. Working on it; it's tougher than it looks.
+* No arrays yet, just linked lists. No functions for string access.
+  - We do have ADTs too, though they need to be integrated into the type system. We have a basic non-balanced BST now.
+* Type system needs to be fleshed out. Basic Hindley-Milner inferrence system is implemented.
   - The postulated token system should be really just predicated on the type system, with a few small extensions
   - Type classes will also depend on this
 * No TCO or any other optimizations
+* modules, namespaces, imports
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
-* modules, namespaces, imports, etc...
