@@ -1,9 +1,14 @@
+{-# LANGUAGE NoMonomorphismRestriction #-}
 module Types (Type(..),
               Scheme(..),
               Types(..),
               TypeMap(..),
               Substitutions,
-              num, bool, str, tuple) where
+              unionAll, initials,
+              tmUnion, tmInsert, tmSingle,
+              tmElems, tmEmpty, tmLookup,
+              bare, num, bool, str, tuple,
+              mapT, listT, var, barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -26,12 +31,17 @@ instance Render Type where
   render _ t = case t of
     TypeVar name -> name
     NamedType "" ts -> "(" ++ intercalate ", " (map (render 0) ts) ++ ")"
+    NamedType "List" ts -> "[" ++ intercalate ", " (map (render 0) ts) ++ "]"
     NamedType name [] -> name
     NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
     t1 :=> t2 -> show' t1 ++ " -> " ++ render 0 t2
-    where show' t@(NamedType (_:_) (_:_)) = "(" ++ render 0 t ++ ")"
+    where show' t@(NamedType "List" _) = render 0 t
+          show' t@(NamedType (_:_) (_:_)) = "(" ++ render 0 t ++ ")"
           show' t@(a :=> b) = "(" ++ render 0 t ++ ")"
           show' t = render 0 t
+
+instance Render Scheme where
+  render _ s = show s
 
 data Scheme = Scheme [Name] Type
 type Substitutions = M.Map Name Type
@@ -54,7 +64,7 @@ instance Types Scheme where
   apply subs (Scheme vars t) =
     Scheme vars (apply (foldr M.delete subs vars) t)
 
-data TypeMap = TM (M.Map Name Type)
+data TypeMap = TM (M.Map Name Scheme)
 
 instance Types TypeMap where
   free (TM env) = unionAll (free <$> M.elems env)
@@ -62,18 +72,61 @@ instance Types TypeMap where
 
 instance Show TypeMap where
   show (TM env) = "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
-    where
-      pairs = M.toList env
-      toS (key, val) = show key ++ " => " ++ render 0 val
+    where pairs = M.toList env
+          toS (key, val) = key ++ ": " ++ render 0 val
+
+instance Render TypeMap where
+  render _ (TM env) = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+    where pairs = M.toList env
+          toS (key, val) = "   " ++ key ++ ": " ++ render 0 val
 
 instance Show Scheme where
   show (Scheme vars t) = loop vars where
     loop [] = render 0 t
     loop (v:vs) = "∀" ++ v ++ "." ++ loop vs
 
-unionAll = foldl' S.union S.empty
+instance Render () where
+  render _ () = "()"
 
+unionAll = foldl' S.union S.empty
+tmLookup name (TM m) = M.lookup name m
+tmInsert name typ (TM m) = TM $ M.insert name typ m
+tmUnion (TM m1) (TM m2) = TM $ M.union m1 m2
+infixl 4 `tmUnion`
+tmElems (TM m) = M.elems m
+tmEmpty = TM M.empty
+tmSingle name typ = TM $ M.singleton name typ
+
+bare = Scheme []
+barev = var ~> bare
 num  = NamedType "Number" []
 str  = NamedType "String" []
 bool = NamedType "Bool" []
 tuple = NamedType ""
+var = TypeVar
+listT t = NamedType "List" [t]
+mapT = Scheme ["a", "b"] ((var "a" :=> var "b") :=> listT (var "a") :=> listT (var "b"))
+
+initials = TM $ M.fromList
+  [
+    ("+", bare $ num :=> num :=> num),
+    ("-", bare $ num :=> num :=> num),
+    ("*", bare $ num :=> num :=> num),
+    ("/", bare $ num :=> num :=> num),
+    ("<", bare $ num :=> num :=> bool),
+    (">", bare $ num :=> num :=> bool),
+    ("<=", bare $ num :=> num :=> bool),
+    (">=", bare $ num :=> num :=> bool),
+    ("&&", bare $ bool :=> bool :=> bool),
+    ("not", bare $ bool :=> bool),
+    ("__matchFail__", witha a),
+    ("__matchError__", witha a),
+    ("[-]", witha $ a :=> a :=> a),
+    ("Empty", witha $ listT a),
+    ("::", witha $ a :=> listT a :=> listT a),
+    ("undefined", witha a),
+    ("map", mapT),
+    ("one23", bare $ listT num)
+  ]
+  where witha = Scheme ["a"]
+        a = var "a"
