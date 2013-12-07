@@ -99,7 +99,7 @@ isToExpr (Interpolate s1 e s2) = case (s1, s2) of
 
 pInString :: Parser InString
 pInString = do
-  first@(Plain s) <- Plain <$> (many $ noneOf "#")
+  first@(Plain s) <- Plain <$> (many $ noneOf "#\"")
   choice [
           try $ pShowExpr $ InterShow first,
           try $ pLiteralExpr $ Interpolate first,
@@ -119,12 +119,7 @@ pInString = do
     join is1 (Interpolate s' e s'') = Interpolate (join is1 s') e s''
 
 pString :: Parser Expr
-pString = do
-  raw <- lexeme . between (char '"') (char '"') . many1 $ noneOf "\""
-  let parsed = parse pInString "Interpolated string" raw
-  case parsed of
-    Left err -> error $ show err
-    Right instring -> instring ! isToExpr ! return
+pString = isToExpr <$> lexeme (between (char '"') (char '"') pInString)
 
 pVariable :: Parser String
 pVariable = checkParse $ (:) <$> first <*> rest where

@@ -128,7 +128,9 @@ initials = TM $ M.fromList
     ("map", Scheme ["a", "b"] ((a :=> b) :=> listT a :=> listT b)),
     ("one23", bare $ listT num),
     ("Just", witha $ a :=> NamedType "Maybe" [a]),
-    ("Nothing", witha $ NamedType "Maybe" [a])
+    ("Nothing", witha $ NamedType "Maybe" [a]),
+    ("show", witha $ a :=> str),
+    ("++", bare $ str :=> str :=> str)
   ]
   where witha = Scheme ["a"]
         a = var "a"
