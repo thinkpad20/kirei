@@ -1,15 +1,8 @@
-module Common ((~>),
-               (!),
-               (<$>),
-               pure,
-               (<*>),
-               (<$),
-               (*>),
-               (<*),
-               intercalate,
-               Name,
-               foldl',
-               foldr,
+{-# LANGUAGE NoMonomorphismRestriction #-}
+module Common ((~>), (!), (<$>), (<!>),
+               pure, (<*>), (<$), (*>),
+               (<*), intercalate, Name,
+               foldl', foldr,
                Render(..)) where
 
 import Prelude hiding (foldl', foldr)
@@ -23,6 +16,9 @@ infixr 9 ~>
 
 (!) = flip ($)
 infixl 0 !
+
+(<!>) = flip (<$>)
+infixr 4 <!>
 
 type Name = String
 
