@@ -108,7 +108,7 @@ desugarList :: Expr -> Expr
 desugarList (List lit) = ds lit where
   ds (ListLiteral []) = Var "Empty"
   ds (ListLiteral (e:es)) = Apply (Apply (Symbol "::") e) (ds (ListLiteral es))
-  ds (ListRange start stop) = error $ "Can't handle list range yet"
+  ds (ListRange start stop) = Apply (Apply (Var "__listRange__") start) stop
 desugarList (If c t f) = If (desugarList c) (desugarList t) (desugarList f)
 desugarList (Apply a b) = Apply (desugarList a) (desugarList b)
 desugarList (Comma a b) = Comma (desugarList a) (desugarList b)

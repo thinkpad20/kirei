@@ -7,8 +7,8 @@ module Types (Type(..),
               unionAll, initials,
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
-              bare, num, bool, str, tuple,
-              mapT, listT, var, barev) where
+              num, bool, str, tuple,
+              listT, var, bare, barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -78,7 +78,7 @@ instance Show TypeMap where
 instance Render TypeMap where
   render _ (TM env) = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
     where pairs = M.toList env
-          toS (key, val) = "   " ++ key ++ ": " ++ render 0 val
+          toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
 
 instance Show Scheme where
   show (Scheme vars t) = loop vars where
@@ -105,7 +105,6 @@ bool = NamedType "Bool" []
 tuple = NamedType ""
 var = TypeVar
 listT t = NamedType "List" [t]
-mapT = Scheme ["a", "b"] ((var "a" :=> var "b") :=> listT (var "a") :=> listT (var "b"))
 
 initials = TM $ M.fromList
   [
@@ -124,9 +123,13 @@ initials = TM $ M.fromList
     ("[-]", witha $ a :=> a :=> a),
     ("Empty", witha $ listT a),
     ("::", witha $ a :=> listT a :=> listT a),
+    ("__listRange__", witha $ a :=> a :=> listT a),
     ("undefined", witha a),
-    ("map", mapT),
-    ("one23", bare $ listT num)
+    ("map", Scheme ["a", "b"] ((a :=> b) :=> listT a :=> listT b)),
+    ("one23", bare $ listT num),
+    ("Just", witha $ a :=> NamedType "Maybe" [a]),
+    ("Nothing", witha $ NamedType "Maybe" [a])
   ]
   where witha = Scheme ["a"]
         a = var "a"
+        b = var "b"
