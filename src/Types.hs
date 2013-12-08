@@ -1,10 +1,9 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Types (Type(..),
               Scheme(..),
-              Types(..),
+              FreeVars(..),
               TypeMap(..),
-              Substitutions,
-              unionAll, initials,
+              unionAll, initials, apply,
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
               num, bool, str, tuple,
@@ -18,57 +17,51 @@ import qualified Data.Set as S
 -------------------------------------------------------
 ----  Data types for Hindley-Milner Type Checker   ----
 -------------------------------------------------------
-
 data Type =
-  TypeVar Name            -- e.g. `a` in `foo : a -> (a, String)` or `List a`
-  | NamedType Name [Type] -- e.g. `String` or `List Int`
-  | Type :=> Type         -- functions
+  TVar Name        -- e.g. `a` in `foo : a -> (a, String)` or `List a`
+  | TConst Name      -- e.g. `Number`
+  | TApply Type Type -- e.g. `Maybe a` or `State [Number] a`
+  | TTuple [Type] -- e.g. `(a, Number)`
+  | Type :=> Type  -- functions
   deriving (Show, Eq, Ord)
 
 infixr 4 :=>
 
 instance Render Type where
   render _ t = case t of
-    TypeVar name -> name
-    NamedType "" ts -> "(" ++ intercalate ", " (map (render 0) ts) ++ ")"
-    NamedType "List" ts -> "[" ++ intercalate ", " (map (render 0) ts) ++ "]"
-    NamedType name [] -> name
-    NamedType name ts -> name ++ " " ++ (intercalate " " $ map show' ts)
-    t1 :=> t2 -> show' t1 ++ " -> " ++ render 0 t2
-    where show' t@(NamedType "List" _) = render 0 t
-          show' t@(NamedType (_:_) (_:_)) = "(" ++ render 0 t ++ ")"
-          show' t@(a :=> b) = "(" ++ render 0 t ++ ")"
-          show' t = render 0 t
+    TVar name -> name
+    TConst name -> name
+    TApply (TConst "[]") t -> "[" ++ r t ++ "]"
+    TApply (TConst c) t -> c ++ " " ++ r t
+    TApply (TVar v) t -> v ++ " " ++ r t
+    TApply t1 t2 -> "(" ++ r t1 ++ " " ++ r t2 ++ ")"
+    TTuple ts -> "(" ++ intercalate ", " (map r ts) ++ ")"
+    t1@(a :=> b) :=> t2 -> "(" ++ r t1 ++ ")" ++ " -> " ++ r t2
+    t1 :=> t2 -> r t1 ++ " -> " ++ r t2
+    where r = render 0
 
 instance Render Scheme where
-  render _ s = show s
+  render _ = show
 
-data Scheme = Scheme [Name] Type
-type Substitutions = M.Map Name Type
+data Scheme = Scheme [Name] Type deriving (Eq, Ord)
 
-class Types a where
+class FreeVars a where
   free :: a -> S.Set Name
-  apply :: Substitutions -> a -> a
 
-instance Types Type where
-  free (TypeVar name) = S.singleton name
-  free (NamedType name ts) = unionAll (free <$> ts)
+instance FreeVars Type where
+  free (TVar name) = S.singleton name
+  free (TConst _) = S.empty
+  free (TTuple ts) = map free ts ! unionAll
+  free (TApply t1 t2) = free t1 `S.union` free t2
   free (t1 :=> t2) = free t1 `S.union` free t2
 
-  apply subs t@(TypeVar name) = M.findWithDefault t name subs
-  apply subs (NamedType name ts) = NamedType name $ fmap (apply subs) ts
-  apply subs (a :=> b) = apply subs a :=> apply subs b
-
-instance Types Scheme where
+instance FreeVars Scheme where
   free (Scheme vars t) = (free t) S.\\ S.fromList vars
-  apply subs (Scheme vars t) =
-    Scheme vars (apply (foldr M.delete subs vars) t)
 
 data TypeMap = TM (M.Map Name Scheme)
 
-instance Types TypeMap where
-  free (TM env) = unionAll (free <$> M.elems env)
-  apply subs (TM env) = TM $ apply subs <$> env
+instance FreeVars TypeMap where
+  free (TM env) = free <$> env ! unionAll
 
 instance Show TypeMap where
   show (TM env) = "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
@@ -97,14 +90,22 @@ tmElems (TM m) = M.elems m
 tmEmpty = TM M.empty
 tmSingle name typ = TM $ M.singleton name typ
 
+apply :: M.Map Name Type -> Type -> Type
+apply subs t@(TVar name) = M.findWithDefault t name subs
+apply _    (TConst name) = TConst name
+apply subs (TTuple ts)   = TTuple (apply subs <$> ts)
+apply subs (TApply a b)  = TApply (apply subs a) (apply subs b)
+apply subs (a :=> b)     = apply subs a :=> apply subs b
+
 bare = Scheme []
-barev = var ~> bare
-num  = NamedType "Number" []
-str  = NamedType "String" []
-bool = NamedType "Bool" []
-tuple = NamedType ""
-var = TypeVar
-listT t = NamedType "List" [t]
+barev = bare . var
+num  = TConst "Number"
+str  = TConst "String"
+bool = TConst "Bool"
+tuple = TTuple
+var = TVar
+listT = TApply (TConst "[]")
+maybeT = TApply (TConst "Maybe")
 
 initials = TM $ M.fromList
   [
@@ -127,8 +128,8 @@ initials = TM $ M.fromList
     ("undefined", witha a),
     ("map", Scheme ["a", "b"] ((a :=> b) :=> listT a :=> listT b)),
     ("one23", bare $ listT num),
-    ("Just", witha $ a :=> NamedType "Maybe" [a]),
-    ("Nothing", witha $ NamedType "Maybe" [a]),
+    ("Just", witha $ a :=> maybeT a),
+    ("Nothing", witha $ maybeT a),
     ("show", witha $ a :=> str),
     ("++", bare $ str :=> str :=> str)
   ]

@@ -122,9 +122,15 @@ pString :: Parser Expr
 pString = isToExpr <$> lexeme (between (char '"') (char '"') pInString)
 
 pVariable :: Parser String
-pVariable = checkParse $ (:) <$> first <*> rest where
-  first = letter <|> char '$' <|> char '_'
-  rest = many (letter <|> digit <|> char '$' <|> char '_')
+pVariable = pTypeName <|> (checkParse $ (:) <$> first <*> rest) where
+  first = lower <|> char '$' <|> char '_'
+  rest = many (alphaNum <|> char '$' <|> char '_')
+
+pTypeVariable :: Parser String
+pTypeVariable = checkParse $ (:) <$> lower <*> many alphaNum
+
+pTypeName :: Parser String
+pTypeName = lexeme $ pure (:) <*> upper <*> many alphaNum
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 symbolChars
@@ -146,14 +152,17 @@ pParens = do
     [e] -> return e
     es -> return $ Tuple es
 
-pDatatype :: Parser Expr
-pDatatype = Datatype <$ keyword "datatype" <*> pVariable <*> many pVariable
-                     <* keysim "=" <*> pConstructors
-                     <* keysim ";" <*> optionMaybe pExprs where
-  pConstructor = do
-    name <- pVariable
-    argumentTypes <- many pType
-    return $ Constructor name argumentTypes
+pADT :: Parser Expr
+pADT = ADT <$ keyword "adt" <*> pTypeName <*> many pTypeVariable
+           <* keysim "=" <*> pConstructors
+           <* keysim ";" <*> optionMaybe pExprs where
+  pConstructor = try pSymConstructor <|> pVarConstructor
+  pSymConstructor = do
+    leftT <- pType
+    name <- pSymbol
+    rightT <- pType
+    return $ Constructor name [leftT, rightT]
+  pVarConstructor = pure Constructor <*> pVariable <*> many pTTerm
   pConstructors = sepBy1 pConstructor (schar '|')
 
 pCase :: Parser Expr
@@ -240,15 +249,29 @@ pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
            <* keysim ":" <*> pType <* keysim ";" <*> optionMaybe pExprs
 
 pType :: Parser Type
-pType = chainr1 pType' (keysim "->" *> pure (:=>)) where
-    pType' = between (schar '(') (schar ')') pType <|> do
-      name <- pVariable
-      if isLower (head name) then return $ TypeVar name else do
-        subTypes <- many pType'
-        return $ NamedType name subTypes
+pType = chainr1 pTApply (keysim "->" *> pure (:=>))
+
+pTApply :: Parser Type
+pTApply = chainl1 pTTerm (pure TApply)
+
+pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
+  pTParens = between (schar '(') (schar ')') pType
+  pTVar = TVar <$> pTypeVariable
+  pTConst = TConst <$> pTypeName
+  pListType = do
+    keysim "["
+    term <- pTTerm
+    keysim "]"
+    return $ TApply (TConst "[]") term
+
+    --pType' = between (schar '(') (schar ')') pType <|> do
+    --  name <- pVariable
+    --  if head name ! isLower then return $ TypeVar name else do
+    --    subTypes <- many pType'
+    --    return $ NamedType name subTypes
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pSig, pLet, pDatatype, pBinary precedences]
+pExpr = choice [pIf, pSig, pLet, pADT, pBinary precedences]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)

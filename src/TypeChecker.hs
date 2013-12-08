@@ -19,12 +19,11 @@ data Env = Env {
 
 defaultEnv = Env initials M.empty S.empty
 
-instance Types Env where
+instance FreeVars Env where
   free env =
     let freeFromTmap = free (tmap env) in
     let freeFromRestrs = unionAll (free <$> rs env) in
     freeFromTmap `S.union` freeFromRestrs `S.union` used env
-  apply = undefined
 
 infer :: Expr -> Inferrer Type
 infer expr = case expr of
@@ -79,9 +78,8 @@ infer expr = case expr of
 instantiate :: Scheme -> Inferrer Type
 instantiate (Scheme vars t) = do
   subs <- mapM newName vars <!> M.fromList
-  let newNameList = subs ! M.toList ! map (snd ~> (\(TypeVar v) -> v))
+  let newNameList = subs ! M.toList ! map snd ! map (\(TVar v) -> v)
   mapM_ addUsedName newNameList
-  env <- get
   return $ apply subs t
 
 generalize :: Type -> Inferrer Scheme
@@ -90,7 +88,7 @@ generalize t = do
   freeInScope     <- free <$> get
   let actuallyFree = freeInType S.\\ freeInScope
   pairs <- mapM newName (S.toList actuallyFree)
-  let newNames = snd ~> (\(TypeVar v) -> v) <$> pairs
+  let newNames = snd ~> (\(TVar v) -> v) <$> pairs
       subs = M.fromList pairs
   return $ Scheme newNames (apply subs t)
 
@@ -105,7 +103,7 @@ newName name = new name "a" where
   new :: Name -> Name -> Inferrer (Name, Type)
   new name name' = get <!> free <!> S.member name' >>= \case
     True -> new name (next name')
-    False -> addUsedName name' >> return (name, (TypeVar name'))
+    False -> addUsedName name' >> return (name, (TVar name'))
   -- | next name takes the next letter in the alphabet unless we've gotten to
   -- z, in which case it adds on an a. Ex: a, b,... z, za, zb,... zz, zza, ..
   next :: Name -> Name
@@ -121,11 +119,12 @@ unify t1 t2 = do
       -- if the types are the same don't do anything
       (a, b) | a == b -> return ()
       -- otherwise if one is a variable create a restriction
-      (TypeVar v, t) -> restrict v t
-      (t, TypeVar v) -> restrict v t
+      (TVar v, t) -> restrict v t
+      (t, TVar v) -> restrict v t
       -- otherwise recurse down
+      (TApply a b, TApply c d) -> unify a c >> unify b d
+      (TTuple ts, TTuple ts') -> zipWithM_ unify ts ts'
       (a :=> b, c :=> d) -> unify a c >> unify b d
-      (NamedType n ts, NamedType n' ts') | n == n' -> zipWithM_ unify ts ts'
       (a, b) -> error msg where
         msg = "Types can't unify: " ++ render 0 a ++ " !: " ++ render 0 b
     restrict v t = modify (\env -> env {rs = M.insert v t (env!rs)})
@@ -134,13 +133,15 @@ refine :: Type -> Inferrer Type
 refine t = r S.empty t where
   r :: S.Set Name -> Type -> Inferrer Type
   r seen t = case t of
-    TypeVar v -> case S.member v seen of
+    TConst name -> return $ TConst name
+    TVar v -> case S.member v seen of
       True -> error "Cycle in types"
       False -> get <!> rs <!> M.lookup v >>= \case
         Nothing -> return t
         Just t' -> r (S.insert v seen) t'
     a :=> b -> pure (:=>) <*> r seen a <*> r seen b
-    NamedType name ts -> NamedType name <$> mapM (r seen) ts
+    TApply a b -> pure TApply <*> r seen a <*> r seen b
+    TTuple ts -> TTuple <$> mapM (r seen) ts
 
 runInfer expr env = do
   (t, env') <- runStateT (infer expr) env

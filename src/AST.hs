@@ -9,6 +9,8 @@ module AST (Expr(..),
 
 import Common
 import Types
+import Prelude hiding (foldr)
+import Data.Char (isUpper)
 import qualified Data.Map as M
 
 type Matches = [(Expr, Expr)]
@@ -32,6 +34,7 @@ data Expr =
   | Lambda Expr Expr
   | List ListLiteral
   | Datatype Name [Name] [Constructor] (Maybe Expr)
+  | ADT Name [Name] [Constructor] (Maybe Expr)
   | Sig Name Type (Maybe Expr)
   deriving (Show, Eq, Ord)
 
@@ -95,6 +98,23 @@ symsToVars expr = case expr of
   Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ symsToVars e)
   Sig name typ (Just next) -> Sig name typ (Just $ symsToVars next)
   e -> e
+
+isTypeName :: Name -> Bool
+isTypeName name = length name > 0 && (head name ! isUpper)
+
+-- | adtToSigs makes a bunch of sig statements and creates a new NamedType
+--adtToSigs :: Expr -> (Expr, Type)
+--adtToSigs (ADT name vars constructors next) =
+--  if not $ isTypeName name then error $ "Invalid adt name `" ++ name ++ "`"
+--    else (makeSigs constructors, newType) where
+--      newType = NamedType name (TypeVar <$> vars)
+--      makeSigs cs = case cs of
+--        [] -> error $ "No constructors provided for adt `" ++ name ++ "`"
+--        (c:cs) -> toSig c $ rest cs
+--      toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
+--      rest [] = next
+--      rest (c:cs) = Just $ toSig c $ rest cs
+
 
 caseToLambda :: Expr -> Expr
 caseToLambda expr = case expr of
