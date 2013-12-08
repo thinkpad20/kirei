@@ -291,8 +291,26 @@ pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
     keysim "]"
     return $ TApply (TConst "[]") term
 
+pFixity :: Parser Expr
+pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
+  pInfixR = go "infixr" RightAssoc
+  pInfixL = go "infixl" LeftAssoc
+  pInfix  = go "infix" NonAssoc
+  go key assoc = do
+    sstring key
+    level <- read <$> many1 digit <* spaces
+    symbol <- pSymbol
+    keysim ";"
+    addFixity level assoc symbol
+
+addFixity :: Int -> (String -> Precedence) -> String -> Parser ()
+addFixity level assoc symbol = modifyState $ add where
+  add table =
+    let precs = M.findWithDefault [] level table in
+    M.insert level (assoc symbol : precs) table
+
 pExpr :: Parser Expr
-pExpr = choice [pIf, pSig, pLet, pADT, pBinary]
+pExpr = choice [pFixity, pIf, pSig, pLet, pADT, pBinary]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
