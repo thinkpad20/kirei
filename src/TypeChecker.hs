@@ -1,4 +1,6 @@
 {-# LANGUAGE LambdaCase #-}
+module TypeChecker (runInfer, typeCheck) where
+
 import Types
 import AST
 import Common
@@ -8,23 +10,88 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Prelude hiding (foldl', foldr, lookup)
 
+------------------------------------------------------------------------------
+----- Inferrer machinery
+------------------------------------------------------------------------------
+
+-- | State of our type inferrer
 type Inferrer = StateT Env IO
 
+-- | tmap holds all determined types. `rs` stands for restrictions and is a
+-- temporary mapping from type variables to their refined types, generated
+-- by `unify`.
 data Env = Env {
     tmap::TypeMap,
     rs::M.Map Name Type,
     used::S.Set String
   } deriving (Show)
 
-
-defaultEnv = Env initials M.empty S.empty
-
+-- | It's useful to be able to pull all of the free variables out of our
+-- environment.
 instance FreeVars Env where
   free env =
     let freeFromTmap = free (tmap env) in
     let freeFromRestrs = unionAll (free <$> rs env) in
     freeFromTmap `S.union` freeFromRestrs `S.union` used env
 
+-- | `defaultEnv` stores some signatures of built-in types in `initials`.
+defaultEnv = Env initials M.empty S.empty
+
+-- | `runInferWith` runs the inferrer on an expression with a specific
+-- environment provided.
+runInferWith :: Env -> Expr -> IO (Type, Env)
+runInferWith env expr = runStateT (infer expr) env
+
+-- | `runInfer` runs the inferrer with the default environment.
+runInfer :: Expr -> IO (Type, Env)
+runInfer = runInferWith defaultEnv
+
+test input = do
+  let expr = grab input
+  (typ, env) <- desugar expr ! runInfer
+  putStrLn $ "Inferred\n   " ++ prettyExpr (grab input)
+  putStrLn $ "to be of type:\n   " ++ render 0 typ
+  return env
+
+test_ input = test input >> return ()
+
+typeCheck :: String -> IO Env
+typeCheck input = snd <$> (input ! grab ! desugar ! runInfer)
+
+listT = TApply (TConst "[]")
+maybeT = TApply (TConst "Maybe")
+
+initials = TM $ M.fromList
+  [
+    ("+", bare $ num :=> num :=> num),
+    ("-", bare $ num :=> num :=> num),
+    ("*", bare $ num :=> num :=> num),
+    ("/", bare $ num :=> num :=> num),
+    ("<", bare $ num :=> num :=> bool),
+    (">", bare $ num :=> num :=> bool),
+    ("<=", bare $ num :=> num :=> bool),
+    (">=", bare $ num :=> num :=> bool),
+    ("&&", bare $ bool :=> bool :=> bool),
+    ("not", bare $ bool :=> bool),
+    ("__matchFail__", witha a),
+    ("__matchError__", witha a),
+    ("[-]", witha $ a :=> a :=> a),
+    ("__listRange__", witha $ a :=> a :=> listT a),
+    ("undefined", witha a),
+    ("++", bare $ str :=> str :=> str)
+  ]
+  where witha = Polytype ["a"]
+        a = var "a"
+        b = var "b"
+
+
+------------------------------------------------------------------------------
+----- Type Inferrence algorithms
+------------------------------------------------------------------------------
+
+-- | `infer` takes an expression and produces a type for that expression.
+-- the `Inferrer` state will also track all of the inferrences made during
+-- the typing of the expression, for future use.
 infer :: Expr -> Inferrer Type
 infer expr = case expr of
   Number _ -> return num
@@ -42,12 +109,7 @@ infer expr = case expr of
     -- unify the types and refine the new variable
     t <- unify var inferred >> refine var
     -- restore the env, generalize the type and store it
-    put env >> generalize t >>= add name
-    case next of
-      -- if there's a next expression infer that
-      Just next -> infer next
-      -- else just return the unit
-      Nothing   -> return $ tuple []
+    put env >> generalize t >>= add name >> handle next
   Lambda (Var name) expr -> do
     -- inject the variable name in and infer the expression
     (paramT, resultT) <- inject name expr
@@ -66,6 +128,8 @@ infer expr = case expr of
   If c t f -> do
     infer c >>= unify bool
     infer t >>= \tT -> infer f >>= \fT -> unify tT fT >> refine tT
+  -- TODO: sigs should not be able to be overwritten in the same scope
+  Sig name typ next -> generalize typ >>= add name >> handle next
   _ -> error $ "Can't handle " ++ show expr ++ " yet"
   where
     newvar = snd <$> newName "a"
@@ -73,16 +137,31 @@ infer expr = case expr of
       new <- newvar
       inferred <- add name (bare new) >> infer expr
       return (new, inferred)
-    add name scheme = modify (\env -> env { tmap = env ! tmap ! tmInsert name scheme })
+    add name polytype =
+      modify (\env -> env { tmap = env ! tmap ! tmInsert name polytype })
+    handle next = case next of
+      -- if there's a next expression infer that
+      Just next -> infer next
+      -- else just return the unit
+      Nothing   -> return $ tuple []
 
-instantiate :: Scheme -> Inferrer Type
-instantiate (Scheme vars t) = do
+-- | `instantiate` creates a type from a polytype, by creating new type
+-- variables (unused in the present scope) for all of the variables in
+-- the polytype's list. Notice that if an `instantiate` were to be immediately
+-- followed by a `generalize`, the original polytype would be returned.
+instantiate :: Polytype -> Inferrer Type
+instantiate (Polytype vars t) = do
   subs <- mapM newName vars <!> M.fromList
   let newNameList = subs ! M.toList ! map snd ! map (\(TVar v) -> v)
   mapM_ addUsedName newNameList
   return $ apply subs t
 
-generalize :: Type -> Inferrer Scheme
+-- | `generalize` is the reverse of `instantiate`. It finds all of the
+-- free variables in the type, removing all of the types which are free
+-- in the current scope (since these are not bound by the type but instead
+-- bound in the enclosing scope) and returns a Polytype with all of the
+-- type's bound variables listed in the polytypes' variable list.
+generalize :: Type -> Inferrer Polytype
 generalize t = do
   let freeInType   = free t
   freeInScope     <- free <$> get
@@ -90,19 +169,20 @@ generalize t = do
   pairs <- mapM newName (S.toList actuallyFree)
   let newNames = snd ~> (\(TVar v) -> v) <$> pairs
       subs = M.fromList pairs
-  return $ Scheme newNames (apply subs t)
+  return $ Polytype newNames (apply subs t)
 
--- | setStartName resets the name to `s`
 addUsedName :: Name -> Inferrer ()
 addUsedName name = modify (\env -> env {used = S.insert name (env!used)})
 
--- | newName takes a starting name and returns a tuple of that name paired
+-- | `newName` takes a starting name and returns a tuple of that name paired
 -- with a new type variable which is unused in the current scope.
 newName name = new name "a" where
   -- see if name' is in the current free variables
   new :: Name -> Name -> Inferrer (Name, Type)
   new name name' = get <!> free <!> S.member name' >>= \case
+    -- if the name is in the free variables, recurse with the next one
     True -> new name (next name')
+    -- name is ok to use. Indicate we're using it and return the pairing
     False -> addUsedName name' >> return (name, (TVar name'))
   -- | next name takes the next letter in the alphabet unless we've gotten to
   -- z, in which case it adds on an a. Ex: a, b,... z, za, zb,... zz, zza, ..
@@ -110,6 +190,10 @@ newName name = new name "a" where
   next name = let (c:cs) = reverse name in
     reverse $ if c < 'z' then succ c : cs else 'a':c:cs
 
+-- | `unify` takes two types and generates whatever restrictions necessary
+-- to ensure that they are equal. For example, unifying `a -> String -> b`
+-- with `Number -> c` will produce restrictions `{a: Number, c: String -> b}`.
+-- Raises an error if two types cannot be made equal.
 unify :: Type -> Type -> Inferrer ()
 unify t1 t2 = do
   t1' <- refine t1
@@ -129,6 +213,10 @@ unify t1 t2 = do
         msg = "Types can't unify: " ++ render 0 a ++ " !: " ++ render 0 b
     restrict v t = modify (\env -> env {rs = M.insert v t (env!rs)})
 
+-- | `refine` takes a type and traces it through the restrictions map,
+-- applying all restrictions it finds, unless it detects a cycle in the
+-- restrictions, for example a mapping from `a` to `b -> a`, in which case
+-- it raises an error.
 refine :: Type -> Inferrer Type
 refine t = r S.empty t where
   r :: S.Set Name -> Type -> Inferrer Type
@@ -142,13 +230,3 @@ refine t = r S.empty t where
     a :=> b -> pure (:=>) <*> r seen a <*> r seen b
     TApply a b -> pure TApply <*> r seen a <*> r seen b
     TTuple ts -> TTuple <$> mapM (r seen) ts
-
-runInfer expr env = do
-  (t, env') <- runStateT (infer expr) env
-  putStrLn $ "Inferred\n   " ++ prettyExpr expr
-  putStrLn $ "to be of type:\n   " ++ render 0 t
-  --putStrLn $ "All inferrences:\n" ++ render 0 (tmap env')
-  when (length (M.toList $ rs env) > 0) $ print (rs env')
-
-infer' :: String -> IO ()
-infer' input = runInfer (desugar $ grab input) defaultEnv

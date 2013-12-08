@@ -1,8 +1,6 @@
--- Somewhat hacky JavaScript AST
 module JavaScript.AST (Statement(..),
                        Expr(..),
                        Block(..),
-                       render,
                        throwNewError) where
 
 import Data.List
@@ -135,12 +133,6 @@ instance Render Expr where
     New e -> ["new ", render n e]
     where sep = intercalate ", "
           sp n s = "\n" ++ replicate (n * indentation) ' ' ++ s
-
---Returns if x is an int to n decimal places
-isIntTo :: (Integral a, RealFrac b) => b -> a -> Bool
-isIntTo x n = (round $ 10^(fromIntegral n)*(x-(fromIntegral $ round x)))==0
-
-isInt x = isIntTo x 10
 
 throwNewError msg = Throw $ New $ Call (Var "Error") [String msg]
 

@@ -163,7 +163,7 @@ pADT = ADT <$ keyword "adt" <*> pTypeName <*> many pTypeVariable
     name <- pSymbol
     rightT <- pType
     return $ Constructor name [leftT, rightT]
-  pVarConstructor = pure Constructor <*> pVariable <*> many pTTerm
+  pVarConstructor = pure Constructor <*> pTypeName <*> many pTTerm
   pConstructors = sepBy1 pConstructor (schar '|')
 
 pCase :: Parser Expr
@@ -269,12 +269,6 @@ pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
     term <- pTTerm
     keysim "]"
     return $ TApply (TConst "[]") term
-
-    --pType' = between (schar '(') (schar ')') pType <|> do
-    --  name <- pVariable
-    --  if head name ! isLower then return $ TypeVar name else do
-    --    subTypes <- many pType'
-    --    return $ NamedType name subTypes
 
 pExpr :: Parser Expr
 pExpr = choice [pIf, pSig, pLet, pADT, pBinary precedences]

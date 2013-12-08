@@ -1,0 +1,3 @@
+idea: a function which takes a constructor for a type and reacts specifically when we pattern match on that constructor, and otherwise just returns the object.
+
+... is this even possible?

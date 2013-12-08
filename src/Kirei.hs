@@ -7,6 +7,7 @@ import Data.List (intercalate)
 import Data.List.Split (splitOn)
 import Control.Monad
 import Control.Applicative ((<$>))
+import TypeChecker
 import Common
 
 usage = "Usage: kirei <input filename(s)> [output filename]"
@@ -24,6 +25,7 @@ preamble = reqStd ++ imprts ++ "\n" where
 compileAndWrite :: String -> IO ()
 compileAndWrite fname = do
   src <- readFile fname
+  typeCheck src
   writeFile (getName fname) (preamble ++ renderJS src ++ "\n")
   putStrLn $ "Wrote output to " ++ getName fname
   where

@@ -8,17 +8,18 @@ import Control.Monad.Identity
 import Data.Monoid
 import Control.Applicative
 import Debug.Trace
-import Data.Char
-import Data.List
+import Data.Char (toLower, isUpper)
+import Prelude hiding (foldr)
 import Common
 import AST
+import Types
 
 -- Exporting functions
 toJs :: String -> J.Block
 toJs = grab ~> compile
 
 renderJS :: String -> String
-renderJS = toJs ~> J.render 0
+renderJS = toJs ~> render 0
 
 ppJS :: String -> IO ()
 ppJS = renderJS ~> putStrLn
@@ -86,8 +87,11 @@ matchesToBlock v matches = case matches of
 
 makeConstructors :: Name -> [Constructor] -> J.Block
 makeConstructors name cs = mconcat (construct ~> single <$> cs) where
-  tName :: TypeName -> String
-  tName (TypeName name ts) = toLower <$> name ++ concatMap tName ts
+  tName (TVar v) = v
+  tName (TConst c) = map toLower c
+  tName (TTuple ts) = concatMap tName ts
+  tName (a :=> b) = tName a ++ "to" ++ tName b
+  tName (TApply a b) = tName a ++ tName b
   mkNames ts = zipWith (++) (tName <$> ts) (show <$> [0..])
   construct :: Constructor -> J.Statement
   construct (Constructor name types) = case types of

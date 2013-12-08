@@ -5,7 +5,8 @@ module AST (Expr(..),
             Matches,
             prettyExpr,
             InString(..),
-            desugar) where
+            desugar,
+            adtToSigs) where
 
 import Common
 import Types
@@ -43,33 +44,42 @@ data ListLiteral =
   | ListRange Expr Expr
   deriving (Show, Eq, Ord)
 
+instance Render Expr where
+  render _ = prettyExpr
+
+instance Render Constructor where
+  render n (Constructor name []) = name
+  render n (Constructor name ts) = name ++ " " ++ int " " (render n <$> ts)
+    where int = intercalate
+
 prettyExpr :: Expr -> String
 prettyExpr e = case e of
   Bool b -> show b
-  Number n -> show n
+  Number n -> if isInt n then show $ floor n else show n
   String s -> show s
   Symbol op -> op
   Var v -> v
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
-  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ (case e2 of
-    Nothing -> ""
-    Just e2 -> prettyExpr e2)
+  Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ handle e2
   Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
   Dotted a b -> prettyExpr a ++ "." ++ prettyExpr b
   Comma a b -> prettyExpr a ++ ", " ++ prettyExpr b
   Case e matches -> "case " ++ prettyExpr e ++ " of " ++ sh matches where
-    sh = map s ~> intercalate "|"
+    sh = map s ~> int "|"
     s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
-  Tuple es -> "(" ++ intercalate ", " (prettyExpr <$> es) ++ ")"
+  Tuple es -> "(" ++ int ", " (prettyExpr <$> es) ++ ")"
   Lambda p e -> "\\" ++ prettyExpr p ++ " -> " ++ prettyExpr e
-  List (ListLiteral es) -> "[" ++ intercalate ", " (prettyExpr <$> es) ++ "]"
+  List (ListLiteral es) -> "[" ++ int ", " (prettyExpr <$> es) ++ "]"
   List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++
                                     prettyExpr stop ++ "]"
-  Sig name typ e -> "sig " ++ name ++ " : " ++ show typ ++ "; " ++ (case e of
-    Nothing -> ""
-    Just e2 -> prettyExpr e2)
+  Sig name typ e -> "sig " ++ name ++ " : " ++ render 0 typ ++ "; " ++ handle e
+  ADT name vars cs next -> "adt " ++ name ++ " " ++ int " " vars ++ " = " ++
+    int " | " (map (render 0) cs) ++ "; " ++ handle next
+  where handle next = case next of Nothing -> ""
+                                   Just e -> prettyExpr e
+        int = intercalate
 
 data InString =
   Plain String
@@ -102,20 +112,6 @@ symsToVars expr = case expr of
 isTypeName :: Name -> Bool
 isTypeName name = length name > 0 && (head name ! isUpper)
 
--- | adtToSigs makes a bunch of sig statements and creates a new NamedType
---adtToSigs :: Expr -> (Expr, Type)
---adtToSigs (ADT name vars constructors next) =
---  if not $ isTypeName name then error $ "Invalid adt name `" ++ name ++ "`"
---    else (makeSigs constructors, newType) where
---      newType = NamedType name (TypeVar <$> vars)
---      makeSigs cs = case cs of
---        [] -> error $ "No constructors provided for adt `" ++ name ++ "`"
---        (c:cs) -> toSig c $ rest cs
---      toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
---      rest [] = next
---      rest (c:cs) = Just $ toSig c $ rest cs
-
-
 caseToLambda :: Expr -> Expr
 caseToLambda expr = case expr of
   Case e ms -> Lambda e (compile e ms)
@@ -124,23 +120,41 @@ caseToLambda expr = case expr of
     compile e ((p,r):ms) =
       Apply (Apply (Symbol "[-]") (Apply (Lambda p r) e)) (compile e ms)
 
+{-
+step :: Expr -> Expr -> Expr
+step foo bar = Apply (Apply (Apply (::)) foo) bar
+-}
+
 desugarList :: Expr -> Expr
-desugarList (List lit) = ds lit where
-  ds (ListLiteral []) = Var "Empty"
-  ds (ListLiteral (e:es)) = Apply (Apply (Symbol "::") e) (ds (ListLiteral es))
-  ds (ListRange start stop) = Apply (Apply (Var "__listRange__") start) stop
-desugarList (If c t f) = If (desugarList c) (desugarList t) (desugarList f)
-desugarList (Apply a b) = Apply (desugarList a) (desugarList b)
-desugarList (Comma a b) = Comma (desugarList a) (desugarList b)
-desugarList (Dotted a b) = Dotted (desugarList a) (desugarList b)
-desugarList (Case e ms) = Case (desugarList e)
-  (map (\(a, b) -> (desugarList a, desugarList b)) ms)
-desugarList (Lambda pat e) = Lambda (desugarList pat) (desugarList e)
-desugarList (Tuple es) = Tuple (map desugarList es)
-desugarList (Let name e Nothing) = Let name (desugarList e) Nothing
-desugarList (Let name e1 (Just e2)) = Let name (desugarList e1) (Just $ desugarList e2)
-desugarList (Datatype n ns cs (Just e)) = Datatype n ns cs (Just $ desugarList e)
-desugarList e = e
+desugarList expr = case expr of
+  List lit -> case lit of
+    ListLiteral es -> foldr cons (Var "[]") es where
+      cons a b = Apply (Apply (Symbol "::") a) b
+    ListRange start stop -> Apply (Apply (Var "__listRange__") start) stop
+  If c t f -> If (rec c) (rec t) (rec f)
+  Apply a b -> Apply (rec a) (rec b)
+  Comma a b -> Comma (rec a) (rec b)
+  Dotted a b -> Dotted (rec a) (rec b)
+  Case e ms -> Case (rec e) (map (\(a, b) -> (rec a, rec b)) ms)
+  Lambda pat e -> Lambda (rec pat) (rec e)
+  Tuple es -> Tuple (map rec es)
+  Let name e Nothing -> Let name (rec e) Nothing
+  Let name e1 (Just e2) -> Let name (rec e1) (Just $ rec e2)
+  ADT n ns cs (Just e) -> adtToSigs (ADT n ns cs (Just $ rec e))
+  ADT n ns cs Nothing -> adtToSigs expr
+  _ -> expr
+  where rec = desugarList
+
+-- | adtToSigs makes a bunch of sig statements and creates a new Type which
+-- should be added to the environment
+adtToSigs :: Expr -> Expr
+adtToSigs (ADT name vars constructors next) = makeSigs constructors where
+  newType = foldl' TApply (TConst name) (TVar <$> vars)
+  makeSigs (c:cs) = toSig c $ rest cs
+  toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
+  rest [] = next
+  rest (c:cs) = Just $ toSig c $ rest cs
+
 
 desugar :: Expr -> Expr
 desugar = desugarList ~> symsToVars

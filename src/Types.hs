@@ -1,13 +1,13 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Types (Type(..),
-              Scheme(..),
+              Polytype(..),
               FreeVars(..),
               TypeMap(..),
-              unionAll, initials, apply,
+              unionAll, apply,
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
               num, bool, str, tuple,
-              listT, var, bare, barev) where
+              var, bare, barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -40,11 +40,13 @@ instance Render Type where
     t1 :=> t2 -> r t1 ++ " -> " ++ r t2
     where r = render 0
 
-instance Render Scheme where
+instance Render Polytype where
   render _ = show
 
-data Scheme = Scheme [Name] Type deriving (Eq, Ord)
+data Polytype = Polytype [Name] Type deriving (Eq, Ord)
 
+-- | The FreeVars class describes objects which can contain free type
+-- variables, i.e. those which are not determined by their containers.
 class FreeVars a where
   free :: a -> S.Set Name
 
@@ -55,10 +57,10 @@ instance FreeVars Type where
   free (TApply t1 t2) = free t1 `S.union` free t2
   free (t1 :=> t2) = free t1 `S.union` free t2
 
-instance FreeVars Scheme where
-  free (Scheme vars t) = (free t) S.\\ S.fromList vars
+instance FreeVars Polytype where
+  free (Polytype vars t) = (free t) S.\\ S.fromList vars
 
-data TypeMap = TM (M.Map Name Scheme)
+data TypeMap = TM (M.Map Name Polytype)
 
 instance FreeVars TypeMap where
   free (TM env) = free <$> env ! unionAll
@@ -73,8 +75,8 @@ instance Render TypeMap where
     where pairs = M.toList env
           toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
 
-instance Show Scheme where
-  show (Scheme vars t) = loop vars where
+instance Show Polytype where
+  show (Polytype vars t) = loop vars where
     loop [] = render 0 t
     loop (v:vs) = "∀" ++ v ++ "." ++ loop vs
 
@@ -97,42 +99,10 @@ apply subs (TTuple ts)   = TTuple (apply subs <$> ts)
 apply subs (TApply a b)  = TApply (apply subs a) (apply subs b)
 apply subs (a :=> b)     = apply subs a :=> apply subs b
 
-bare = Scheme []
+bare = Polytype []
 barev = bare . var
 num  = TConst "Number"
 str  = TConst "String"
 bool = TConst "Bool"
 tuple = TTuple
 var = TVar
-listT = TApply (TConst "[]")
-maybeT = TApply (TConst "Maybe")
-
-initials = TM $ M.fromList
-  [
-    ("+", bare $ num :=> num :=> num),
-    ("-", bare $ num :=> num :=> num),
-    ("*", bare $ num :=> num :=> num),
-    ("/", bare $ num :=> num :=> num),
-    ("<", bare $ num :=> num :=> bool),
-    (">", bare $ num :=> num :=> bool),
-    ("<=", bare $ num :=> num :=> bool),
-    (">=", bare $ num :=> num :=> bool),
-    ("&&", bare $ bool :=> bool :=> bool),
-    ("not", bare $ bool :=> bool),
-    ("__matchFail__", witha a),
-    ("__matchError__", witha a),
-    ("[-]", witha $ a :=> a :=> a),
-    ("Empty", witha $ listT a),
-    ("::", witha $ a :=> listT a :=> listT a),
-    ("__listRange__", witha $ a :=> a :=> listT a),
-    ("undefined", witha a),
-    ("map", Scheme ["a", "b"] ((a :=> b) :=> listT a :=> listT b)),
-    ("one23", bare $ listT num),
-    ("Just", witha $ a :=> maybeT a),
-    ("Nothing", witha $ maybeT a),
-    ("show", witha $ a :=> str),
-    ("++", bare $ str :=> str :=> str)
-  ]
-  where witha = Scheme ["a"]
-        a = var "a"
-        b = var "b"
