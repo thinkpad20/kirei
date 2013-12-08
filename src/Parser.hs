@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 module Parser (grab) where
 
 import Text.ParserCombinators.Parsec
@@ -204,7 +205,7 @@ pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
 
 pApply :: Parser Expr
 pApply = pDotted >>= parseRest where
-  parseRest res = do -- res is a
+  parseRest res = do -- res is a parsed expression
     term <- pDotted -- run the parser again
     parseRest (Apply res term)
     <|> return res -- at some point the second parse will fail; then
@@ -226,7 +227,7 @@ pIf = If <$ keyword "if"   <*> pExpr
 pLambda :: Parser Expr
 pLambda = do
   keysim "\\" <|> keysim "λ"
-  vars <- many pVariable
+  vars <- many1 pVariable
   keysim "->" <|> keysim "."
   expr <- pExpr
   return $ lambda vars expr where
@@ -248,8 +249,13 @@ pSig :: Parser Expr
 pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
            <* keysim ":" <*> pType <* keysim ";" <*> optionMaybe pExprs
 
+pTTuple :: Parser Type
+pTTuple = pTApply `sepBy` (keysim ",") >>= \case
+  [t] -> return t
+  ts  -> return $ TTuple ts
+
 pType :: Parser Type
-pType = chainr1 pTApply (keysim "->" *> pure (:=>))
+pType = chainr1 pTTuple (keysim "->" *> pure (:=>))
 
 pTApply :: Parser Type
 pTApply = chainl1 pTTerm (pure TApply)

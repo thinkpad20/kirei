@@ -1,0 +1,3 @@
+Idea: type lambdas
+
+instead of schemes, can we approach polytypes as lambda types and use currying for type inferrence? Challenging...
