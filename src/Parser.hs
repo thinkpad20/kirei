@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Parser (grab) where
 
-import Text.ParserCombinators.Parsec
+import Text.Parsec hiding (parse)
 import Data.List
 import Control.Applicative hiding ((<|>), many, optional)
 import Data.Monoid
@@ -10,6 +10,16 @@ import Common
 import AST
 import Types
 import Data.Char (isLower)
+import qualified Data.Map as M
+
+type UserState = PrecedenceTable
+type PrecedenceTable = M.Map Int [Precedence]
+type Source = String
+type Parser = ParsecT Source UserState IO
+
+data Precedence = LeftAssoc Name | RightAssoc Name | NonAssoc Name
+
+
 
 skip :: Parser ()
 skip = spaces *> (blockCom <|> lineComment <|> spaces) where
@@ -21,22 +31,33 @@ skip = spaces *> (blockCom <|> lineComment <|> spaces) where
   blockCom = string "/*" >> manyTill anyChar (try $ string "*/") >> return ()
 
 
-precedences = [
-                ["!", "$"], -- lowest precedence
-                [">>", ">>="],
-                ["||", "&&"],
-                ["==", "!=", "<", ">", "<=", ">="],
-                ["::", "++"],
-                ["+",  "-"],
-                ["*",  "/"],
-                ["^"],
-                ["~>", "<~", "!!"] --highest precedence
+precedences :: PrecedenceTable
+precedences = M.fromList [
+                (0, [l "!", r "$"]), -- lowest precedence
+                (1, [l ">>", l ">>="]),
+                (2, [r "||"]),
+                (3, [r "&&"]),
+                (4, [n "==", n "!=", n "<", n ">", n "<=", n ">="]),
+                (5, [r "::", r "++"]),
+                (6, [l "+", l "-"]),
+                (7, [l "*", l "/"]),
+                (8, [r "^"]),
+                (9, [l "~>", r "<~", r "!!"]) --highest precedence
               ]
+              where l = LeftAssoc; r = RightAssoc; n = NonAssoc
 
-pBinary :: [[String]] -> Parser Expr
-pBinary = pFrom where
-  pFrom [] = pApply
-  pFrom (symbols:sss) = pRightAssoc (pFrom sss) (choice $ getSym <$> symbols)
+pBinary :: Parser Expr
+pBinary = getState >>= pFrom 0 where
+  pFrom :: Int -> PrecedenceTable -> Parser Expr
+  pFrom n precTable | n > 9     = pApply
+                    | otherwise = runPrecs precs where
+    precs :: [Precedence]
+    precs = M.findWithDefault [] n precTable
+    runPrecs :: [Precedence] -> Parser Expr
+    runPrecs [] = pFrom (n+1) precTable
+    runPrecs (RightAssoc sym:syms) = pRightAssoc (runPrecs syms) (getSym sym)
+    runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (getSym sym)
+    runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (getSym sym)
 
 keywords = ["if", "then", "else", "True", "False",
             "let", "sig", "case", "of"]
@@ -131,7 +152,7 @@ pTypeVariable :: Parser String
 pTypeVariable = checkParse $ (:) <$> lower <*> many alphaNum
 
 pTypeName :: Parser String
-pTypeName = lexeme $ pure (:) <*> upper <*> many alphaNum
+pTypeName = lexeme $ (:) <$> upper <*> many alphaNum
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 symbolChars
@@ -271,17 +292,19 @@ pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
     return $ TApply (TConst "[]") term
 
 pExpr :: Parser Expr
-pExpr = choice [pIf, pSig, pLet, pADT, pBinary precedences]
+pExpr = choice [pIf, pSig, pLet, pADT, pBinary]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 
-grab :: String -> Expr
-grab s = case parse (skip *> pExprs
-                     <* many (keysim ";")
-                     <* eof) "" s of
-  Right val -> val
-  Left err -> error $ show err
+parse :: Parser a -> UserState -> Source -> IO (Either ParseError a)
+parse p u s = runParserT p u "" s
 
-test parser = parse (skip *> parser <* eof) ""
+grab :: String -> IO Expr
+grab s = parse parseIt precedences s >>= \case
+  Right expr -> return expr
+  Left err -> error $ show err
+  where parseIt = skip *> pExprs <* many (keysim ";") <* eof
+
+-- test parser = parse (skip *> parser <* eof) ""
 
