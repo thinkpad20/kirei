@@ -23,6 +23,7 @@ data Expr =
   | Number Double
   | String String
   | Symbol Name
+  | TypeName Name
   | Var Name
   | Underscore
   | If Expr Expr Expr
@@ -59,6 +60,7 @@ prettyExpr e = case e of
   String s -> show s
   Symbol op -> op
   Var v -> v
+  TypeName name -> name
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
@@ -94,27 +96,25 @@ instance Show InString where
 symsToVars :: Expr -> Expr
 symsToVars expr = case expr of
   Symbol s -> Var s
-  If c t f -> If (symsToVars c) (symsToVars t) (symsToVars f)
-  Let name e Nothing -> Let name (symsToVars e) Nothing
-  Let name e (Just e') -> Let name (symsToVars e) (Just (symsToVars e'))
-  Apply a b -> Apply (symsToVars a) (symsToVars b)
-  Dotted a b -> Dotted (symsToVars a) (symsToVars b)
-  Comma a b -> Comma (symsToVars a) (symsToVars b)
-  c@(Case e ms) -> symsToVars $ caseToLambda c
-  Tuple es -> Tuple $ map symsToVars es
-  Lambda pat e -> Lambda (symsToVars pat) (symsToVars e)
-  List (ListLiteral l) -> List (ListLiteral $ map symsToVars l)
-  List (ListRange a b) -> List (ListRange (symsToVars a) (symsToVars b))
-  Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ symsToVars e)
-  Sig name typ (Just next) -> Sig name typ (Just $ symsToVars next)
+  If c t f -> If (rec c) (rec t) (rec f)
+  Let name e Nothing -> Let name (rec e) Nothing
+  Let name e (Just e') -> Let name (rec e) (Just (rec e'))
+  Apply a b -> Apply (rec a) (rec b)
+  Dotted a b -> Dotted (rec a) (rec b)
+  Comma a b -> Comma (rec a) (rec b)
+  c@(Case e ms) -> rec $ caseToLambda c
+  Tuple es -> Tuple $ map rec es
+  Lambda pat e -> Lambda (rec pat) (rec e)
+  List (ListLiteral l) -> List (ListLiteral $ map rec l)
+  List (ListRange a b) -> List (ListRange (rec a) (rec b))
+  Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ rec e)
+  Sig name typ (Just next) -> Sig name typ (Just $ rec next)
   e -> e
-
-isTypeName :: Name -> Bool
-isTypeName name = length name > 0 && (head name ! isUpper)
+  where rec = symsToVars
 
 caseToLambda :: Expr -> Expr
 caseToLambda expr = case expr of
-  Case e ms -> Lambda e (compile e ms)
+  Case e ms -> compile e ms
   where
     compile _ [] = Var "__matchError__"
     compile e ((p,r):ms) =
@@ -128,8 +128,8 @@ step foo bar = Apply (Apply (Apply (::)) foo) bar
 desugarList :: Expr -> Expr
 desugarList expr = case expr of
   List lit -> case lit of
-    ListLiteral es -> foldr cons (Var "[]") es where
-      cons a b = Apply (Apply (Symbol "::") a) b
+    ListLiteral es -> foldr cons (TypeName "[]") es where
+      cons a b = Apply (Apply (TypeName "::") a) b
     ListRange start stop -> Apply (Apply (Var "__listRange__") start) stop
   If c t f -> If (rec c) (rec t) (rec f)
   Apply a b -> Apply (rec a) (rec b)

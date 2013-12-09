@@ -7,7 +7,7 @@ module Types (Type(..),
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
               num, bool, str, tuple,
-              var, bare, barev) where
+              bare, barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -100,9 +100,8 @@ apply subs (TApply a b)  = TApply (apply subs a) (apply subs b)
 apply subs (a :=> b)     = apply subs a :=> apply subs b
 
 bare = Polytype []
-barev = bare . var
+barev = bare . TVar
 num  = TConst "Number"
 str  = TConst "String"
 bool = TConst "Bool"
 tuple = TTuple
-var = TVar

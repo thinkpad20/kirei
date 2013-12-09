@@ -47,16 +47,19 @@ runInfer :: Expr -> IO (Type, Env)
 runInfer = runInferWith defaultEnv
 
 test input = do
-  let expr = grab input
+  expr <- grab input
+  putStrLn $ "Desugared, this expression is " ++ show (desugar expr) ++ "\n\n"
   (typ, env) <- desugar expr ! runInfer
-  putStrLn $ "Inferred\n   " ++ prettyExpr (grab input)
+  putStrLn $ "Inferred\n   " ++ prettyExpr expr
   putStrLn $ "to be of type:\n   " ++ render 0 typ
   return env
 
 test_ input = test input >> return ()
 
 typeCheck :: String -> IO Env
-typeCheck input = snd <$> (input ! grab ! desugar ! runInfer)
+typeCheck input = do
+  expr <- desugar <$> grab input
+  snd <$> runInfer expr
 
 listT = TApply (TConst "[]")
 maybeT = TApply (TConst "Maybe")
@@ -75,14 +78,16 @@ initials = TM $ M.fromList
     ("not", bare $ bool :=> bool),
     ("__matchFail__", witha a),
     ("__matchError__", witha a),
+    ("::", witha $ a :=> listT a :=> listT a),
+    ("[]", witha $ listT a),
     ("[-]", witha $ a :=> a :=> a),
     ("__listRange__", witha $ a :=> a :=> listT a),
     ("undefined", witha a),
     ("++", bare $ str :=> str :=> str)
   ]
   where witha = Polytype ["a"]
-        a = var "a"
-        b = var "b"
+        a = TVar "a"
+        b = TVar "b"
 
 
 ------------------------------------------------------------------------------
@@ -101,6 +106,7 @@ infer expr = case expr of
   Var v -> get <!> tmap <!> tmLookup v >>= \case
     Nothing -> error $ "Variable `" ++ v ++ "` not defined in scope"
     Just t -> instantiate t
+  TypeName n -> infer (Var n)
   Let name expr next -> do
     -- grab a copy of the current env
     env <- get
@@ -110,12 +116,39 @@ infer expr = case expr of
     t <- unify var inferred >> refine var
     -- restore the env, generalize the type and store it
     put env >> generalize t >>= add name >> handle next
-  Lambda (Var name) expr -> do
+  --Lambda (Var name) expr -> do
+  --  (paramT, resultT) <- inject name expr
+  --  -- a lambda must be a function from paramT to resultT
+  --  refine (paramT :=> resultT)
+  Lambda pattern expr -> do
     -- inject the variable name in and infer the expression
-    (paramT, resultT) <- inject name expr
-    -- a lambda must be a function from paramT to resultT
-    refine (paramT :=> resultT)
+    --env <- get
+    prnt $ "Lambda ) " ++ show expr
+    patternT <- inferPattern pattern
+    prnt $ "found the pattern type to be " ++ show patternT
+    env <- get
+    prnt $ "this is our environment: " ++ show env
+    bodyT <- infer expr
+    prnt $ "found the body type to be " ++ show patternT
+    t <- refine (patternT :=> bodyT) -- <* put env
+    prnt $ "here's what the lambda types to: " ++ show t
+    return t
+    where
+      inferPattern pat = case pat of
+        Var v -> newvar >>= \t -> add v (bare t) >> return t
+        TypeName n -> infer pat
+        Number _ -> return num
+        String _ -> return str
+        Apply a b -> do
+          aT <- inferPattern a
+          bT <- inferPattern b
+          rT <- newvar
+          unify aT (bT :=> rT)
+          refine rT
+        otherwise -> error $ "Expression " ++
+          show pat ++ " is invalid in pattern"
   Apply func arg -> do
+    prnt $ "Inferring the application of " ++ show func ++ " to " ++ show arg
     -- infer the function type
     funcT <- infer func
     -- infer the argument type
@@ -144,6 +177,9 @@ infer expr = case expr of
       Just next -> infer next
       -- else just return the unit
       Nothing   -> return $ tuple []
+
+prnt :: String -> Inferrer ()
+prnt = lift . putStrLn
 
 -- | `instantiate` creates a type from a polytype, by creating new type
 -- variables (unused in the present scope) for all of the variables in

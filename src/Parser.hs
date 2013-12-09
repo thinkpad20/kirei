@@ -19,7 +19,11 @@ type Parser = ParsecT Source UserState IO
 
 data Precedence = LeftAssoc Name | RightAssoc Name | NonAssoc Name
 
+getPrecedences :: Parser PrecedenceTable
+getPrecedences = getState
 
+modPrecedences :: (PrecedenceTable -> PrecedenceTable) -> Parser ()
+modPrecedences = modifyState
 
 skip :: Parser ()
 skip = spaces *> (blockCom <|> lineComment <|> spaces) where
@@ -47,7 +51,7 @@ precedences = M.fromList [
               where l = LeftAssoc; r = RightAssoc; n = NonAssoc
 
 pBinary :: Parser Expr
-pBinary = getState >>= pFrom 0 where
+pBinary = getPrecedences >>= pFrom 0 where
   pFrom :: Int -> PrecedenceTable -> Parser Expr
   pFrom n precTable | n > 9     = pApply
                     | otherwise = runPrecs precs where
@@ -59,14 +63,14 @@ pBinary = getState >>= pFrom 0 where
     runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (getSym sym)
     runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (getSym sym)
 
-keywords = ["if", "then", "else", "True", "False",
-            "let", "sig", "case", "of"]
+keywords = ["if", "then", "else", "True", "False", "let", "sig", "case", "of",
+            "infix", "infixl", "infixr", "type", "typeclass", "typedef", "[]"]
 keySyms = ["->", "|", "=", ";", "\\"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
 
-symChars = "><=+-*/^~!%@&$:λ."
+symChars = "><=+-*/^~!%@&$:."
 
 symbolChars :: Parser Char
 symbolChars = oneOf symChars
@@ -140,11 +144,17 @@ pInString = do
     join is1 (InterShow s' e s'') = InterShow (join is1 s') e s''
     join is1 (Interpolate s' e s'') = Interpolate (join is1 s') e s''
 
+-- | Wraps string interpolation.
 pString :: Parser Expr
 pString = isToExpr <$> lexeme (between (char '"') (char '"') pInString)
+          <|> String <$> pSimpleString
+
+-- | Without string interpolation.
+pSimpleString :: Parser String
+pSimpleString = lexeme $ between (char '\'') (char '\'') (many $ noneOf "'")
 
 pVariable :: Parser String
-pVariable = pTypeName <|> (checkParse $ (:) <$> first <*> rest) where
+pVariable = (checkParse $ (:) <$> first <*> rest) where
   first = lower <|> char '$' <|> char '_'
   rest = many (alphaNum <|> char '$' <|> char '_')
 
@@ -152,7 +162,7 @@ pTypeVariable :: Parser String
 pTypeVariable = checkParse $ (:) <$> lower <*> many alphaNum
 
 pTypeName :: Parser String
-pTypeName = lexeme $ (:) <$> upper <*> many alphaNum
+pTypeName = lexeme $ (:) <$> upper <*> many alphaNum <|> keyword "[]"
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 symbolChars
@@ -175,7 +185,7 @@ pParens = do
     es -> return $ Tuple es
 
 pADT :: Parser Expr
-pADT = ADT <$ keyword "adt" <*> pTypeName <*> many pTypeVariable
+pADT = ADT <$ keyword "type" <*> pTypeName <*> many pTypeVariable
            <* keysim "=" <*> pConstructors
            <* keysim ";" <*> optionMaybe pExprs where
   pConstructor = try pSymConstructor <|> pVarConstructor
@@ -190,12 +200,28 @@ pADT = ADT <$ keyword "adt" <*> pTypeName <*> many pTypeVariable
 pCase :: Parser Expr
 pCase = Case <$ keyword "case" <*> pExpr
              <* keyword "of"   <*> sepBy1 pMatch (schar '|') where
-  pMatch = (,) <$> pExpr <* keysim "->" <*> pExprs
+  pMatch = (,) <$> pPattern <* keysim "->" <*> pExprs
+
+-- | A pattern is an expression with a restricted syntax: restricted only to
+-- variables, type names, constants, and applications thereof. A pattern must
+-- resolve to a fully constructed type, but this will be checked later.
+pPattern :: Parser Expr
+pPattern = chainr1 pPatternApply next where
+  next = do
+    sym <- pSymbol
+    return (\expr -> Apply (Apply (TypeName sym) expr))
+
+pPatternApply = chainl1 pPatternTerm (pure Apply)
+pPatternTerm = choice [pLit, pVar, pConstr] where
+  pLit = Number <$> pDouble <|> String <$> pSimpleString
+  pVar = Var <$> pVariable
+  pConstr = TypeName <$> pTypeName
 
 pVariableOrUnderscore :: Parser Expr
 pVariableOrUnderscore = do
   v <- pVariable
   if v == "_" then return Underscore else return $ Var v
+  <|> TypeName <$> pTypeName
 
 pTerm :: Parser Expr
 pTerm = choice [ Bool   <$> pBool,
@@ -205,7 +231,7 @@ pTerm = choice [ Bool   <$> pBool,
                  pParens,
                  pLambda,
                  pCase,
-                 pList]
+                 pList ]
 
 pRightAssoc :: Parser Expr -> Parser String -> Parser Expr
 pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
@@ -217,6 +243,7 @@ pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
       (Nothing, Nothing) -> (Symbol sym)
       (Just left, Nothing) -> Apply (Symbol sym) left
       (Nothing, Just right) ->
+        -- should get an unused var here instead of _a
         Lambda (Var "_a") (Apply (Apply (Symbol sym) (Var "_a")) right)
       (Just left, Just right) ->
         Apply (Apply (Symbol sym) left) right
@@ -285,11 +312,7 @@ pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
   pTParens = between (schar '(') (schar ')') pType
   pTVar = TVar <$> pTypeVariable
   pTConst = TConst <$> pTypeName
-  pListType = do
-    keysim "["
-    term <- pTTerm
-    keysim "]"
-    return $ TApply (TConst "[]") term
+  pListType = TApply (TConst "[]") <$ keysim "[" <*> pTTerm <* keysim "]"
 
 pFixity :: Parser Expr
 pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
@@ -304,7 +327,10 @@ pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
     addFixity level assoc symbol
 
 addFixity :: Int -> (String -> Precedence) -> String -> Parser ()
-addFixity level assoc symbol = modifyState $ add where
+addFixity level assoc symbol = if level < -1 || level > 9 then
+  error $ "Invalid fixity for `" ++ symbol ++
+          "`: Fixity levels must be between 0 and 9"
+  else modPrecedences $ add where
   add table =
     let precs = M.findWithDefault [] level table in
     M.insert level (assoc symbol : precs) table
@@ -323,6 +349,3 @@ grab s = parse parseIt precedences s >>= \case
   Right expr -> return expr
   Left err -> error $ show err
   where parseIt = skip *> pExprs <* many (keysim ";") <* eof
-
--- test parser = parse (skip *> parser <* eof) ""
-
