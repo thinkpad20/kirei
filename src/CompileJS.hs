@@ -1,4 +1,4 @@
-module CompileJS (toJs, renderJS, ppJS) where
+module CompileJS (toJs, renderJS, ppJS, grab) where
 
 import qualified JavaScript.AST as J
 import Parser
@@ -15,14 +15,14 @@ import AST
 import Types
 
 -- Exporting functions
-toJs :: String -> J.Block
-toJs = grab ~> compile
+toJs :: String -> IO J.Block
+toJs src = grab src >>= return . compile
 
-renderJS :: String -> String
-renderJS = toJs ~> render 0
+renderJS :: String -> IO String
+renderJS src = toJs src >>= return . (render 0)
 
 ppJS :: String -> IO ()
-ppJS = renderJS ~> putStrLn
+ppJS src = renderJS src >>= putStrLn
 
 single e = J.Block [e]
 

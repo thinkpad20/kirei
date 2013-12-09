@@ -142,6 +142,7 @@ desugarList expr = case expr of
   Let name e1 (Just e2) -> Let name (rec e1) (Just $ rec e2)
   ADT n ns cs (Just e) -> adtToSigs (ADT n ns cs (Just $ rec e))
   ADT n ns cs Nothing -> adtToSigs expr
+  Sig n t (Just e) -> Sig n t (Just $ rec e)
   _ -> expr
   where rec = desugarList
 

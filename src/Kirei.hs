@@ -20,13 +20,18 @@ preamble = reqStd ++ imprts ++ "\n" where
              "defaultShow", "printLn", "print"]
   require o = concat ["var ", o, " = std.", o, ";\n"]
 
+typeCheckFile :: FilePath -> IO ()
+typeCheckFile path = do
+  src <- readFile path
+  env <- typeCheckEnv src
+  putStrLn $ "Env: " ++ render 0 (tmap env)
 
-
-compileAndWrite :: String -> IO ()
+compileAndWrite :: FilePath -> IO ()
 compileAndWrite fname = do
   src <- readFile fname
   typeCheck src
-  writeFile (getName fname) (preamble ++ renderJS src ++ "\n")
+  rendered <- renderJS src
+  writeFile (getName fname) (preamble ++ rendered ++ "\n")
   putStrLn $ "Wrote output to " ++ getName fname
   where
     getName = splitOn "." ~> init ~> intercalate "." ~> (++ ".js")

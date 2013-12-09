@@ -26,14 +26,18 @@ modPrecedences :: (PrecedenceTable -> PrecedenceTable) -> Parser ()
 modPrecedences = modifyState
 
 skip :: Parser ()
-skip = spaces *> (blockCom <|> lineComment <|> spaces) where
-  lineComment = do
-    char '#'
-    many $ noneOf "\n"
-    newline <|> (eof >> return ' ')
-    return ()
-  blockCom = string "/*" >> manyTill anyChar (try $ string "*/") >> return ()
-
+skip = spaces *> many (choice [try blockComment,
+                                try lineComment]) >> return ()
+  where
+    lineComment = do
+      string "//"
+      many (noneOf "\n")
+      newline <|> (eof >> return ' ')
+      spaces
+    blockComment = do
+      string "/*"
+      manyTill anyChar (try $ string "*/")
+      spaces
 
 precedences :: PrecedenceTable
 precedences = M.fromList [
@@ -63,14 +67,15 @@ pBinary = getPrecedences >>= pFrom 0 where
     runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (getSym sym)
     runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (getSym sym)
 
-keywords = ["if", "then", "else", "True", "False", "let", "sig", "case", "of",
-            "infix", "infixl", "infixr", "type", "typeclass", "typedef", "[]"]
+keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
+            "infixl", "infixr", "type", "typeclass", "typedef", "[]",
+            "__matchError__", "__matchFail__"]
 keySyms = ["->", "|", "=", ";", "\\"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
 
-symChars = "><=+-*/^~!%@&$:."
+symChars = "><=+-*/^~!%@&$:.#|"
 
 symbolChars :: Parser Char
 symbolChars = oneOf symChars
@@ -93,9 +98,6 @@ checkParse p = lexeme . try $ do
   if s `elem` (keywords ++ keySyms)
     then unexpected $ "reserved word " ++ show s
     else return s
-
-pBool :: Parser Bool
-pBool = (True <$ keyword "True") <|> (False <$ keyword "False")
 
 pDouble :: Parser Double
 pDouble = lexeme $ do
@@ -154,15 +156,22 @@ pSimpleString :: Parser String
 pSimpleString = lexeme $ between (char '\'') (char '\'') (many $ noneOf "'")
 
 pVariable :: Parser String
-pVariable = (checkParse $ (:) <$> first <*> rest) where
-  first = lower <|> char '$' <|> char '_'
-  rest = many (alphaNum <|> char '$' <|> char '_')
+pVariable = checkParse $ do
+  first <- lower <|> char '$' <|> char '_'
+  rest <- many $ alphaNum <|> char '$' <|> char '_'
+  ticks <- many $ char '\''
+  return $ first : rest ++ ticks
 
 pTypeVariable :: Parser String
 pTypeVariable = checkParse $ (:) <$> lower <*> many alphaNum
 
 pTypeName :: Parser String
-pTypeName = lexeme $ (:) <$> upper <*> many alphaNum <|> keyword "[]"
+pTypeName = lexeme $ do
+  first <- upper
+  rest <- many alphaNum
+  ticks <- many $ char '\''
+  return $ first : rest ++ ticks
+  <|> keyword "[]"
 
 pSymbol :: Parser String
 pSymbol = checkParse $ many1 symbolChars
@@ -212,22 +221,26 @@ pPattern = chainr1 pPatternApply next where
     return (\expr -> Apply (Apply (TypeName sym) expr))
 
 pPatternApply = chainl1 pPatternTerm (pure Apply)
-pPatternTerm = choice [pLit, pVar, pConstr] where
+pPatternTerm = choice [pPatParens, pLit, pVar, pConstr] where
   pLit = Number <$> pDouble <|> String <$> pSimpleString
   pVar = Var <$> pVariable
   pConstr = TypeName <$> pTypeName
+  pPatParens = do
+    pats <- between (schar '(') (schar ')') $ sepBy pPattern (schar ',')
+    case pats of
+      [p] -> return p
+      _ -> return $ Tuple pats
 
-pVariableOrUnderscore :: Parser Expr
-pVariableOrUnderscore = do
+pAnyVariable :: Parser Expr
+pAnyVariable = do
   v <- pVariable
   if v == "_" then return Underscore else return $ Var v
   <|> TypeName <$> pTypeName
 
 pTerm :: Parser Expr
-pTerm = choice [ Bool   <$> pBool,
-                 Number <$> pDouble,
+pTerm = choice [ Number <$> pDouble,
                  pString,
-                 pVariableOrUnderscore,
+                 pAnyVariable,
                  pParens,
                  pLambda,
                  pCase,
@@ -321,7 +334,7 @@ pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
   pInfix  = go "infix" NonAssoc
   go key assoc = do
     sstring key
-    level <- read <$> many1 digit <* spaces
+    level <- read <$> many1 digit <* skip
     symbol <- pSymbol
     keysim ";"
     addFixity level assoc symbol
@@ -336,7 +349,7 @@ addFixity level assoc symbol = if level < -1 || level > 9 then
     M.insert level (assoc symbol : precs) table
 
 pExpr :: Parser Expr
-pExpr = choice [pFixity, pIf, pSig, pLet, pADT, pBinary]
+pExpr = choice [try pFixity, pIf, pSig, pLet, pADT, pBinary]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)

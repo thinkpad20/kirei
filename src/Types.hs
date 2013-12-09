@@ -40,10 +40,7 @@ instance Render Type where
     t1 :=> t2 -> r t1 ++ " -> " ++ r t2
     where r = render 0
 
-instance Render Polytype where
-  render _ = show
-
-data Polytype = Polytype [Name] Type deriving (Eq, Ord)
+data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
 
 -- | The FreeVars class describes objects which can contain free type
 -- variables, i.e. those which are not determined by their containers.
@@ -75,10 +72,9 @@ instance Render TypeMap where
     where pairs = M.toList env
           toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
 
-instance Show Polytype where
-  show (Polytype vars t) = loop vars where
-    loop [] = render 0 t
-    loop (v:vs) = "∀" ++ v ++ "." ++ loop vs
+instance Render Polytype where
+  render n (Polytype [] t) = render n t
+  render n (Polytype vars t) = "∀" ++ intercalate " " vars ++ ". " ++ render n t
 
 instance Render () where
   render _ () = "()"
