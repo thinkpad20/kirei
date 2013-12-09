@@ -21,16 +21,16 @@ sig $IO : IO;
 
 type Tree a = Leaf | Branch a (Tree a) (Tree a);
 
-let singleton = \a -> Branch a Leaf Leaf;
+let singleton a = Branch a Leaf Leaf;
 
-let contains = \a tree -> case tree of
+let contains a tree = case tree of
   Leaf -> False
 | Branch b left right ->
     if a == b then True
     else if a < b then contains a left
     else contains a right;
 
-let insert = \a tree -> case tree of
+let insert a tree = case tree of
   Leaf -> Branch a Leaf Leaf
 | Branch b left right ->
     if a == b then tree

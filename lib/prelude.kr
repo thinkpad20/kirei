@@ -14,28 +14,31 @@ sig < : Number -> Number -> Bool;
 sig >= : Number -> Number -> Bool;
 sig <= : Number -> Number -> Bool;
 sig == : Number -> Number -> Bool;
-sig ++ : String -> String -> String;
 sig print : String -> IO -> ();
 sig undefined : a;
 
-let reverse = \list ->
-   let reverse' = \acc list' -> case list' of
+let ++ list1 list2 = case list1 of
+  [] -> list2
+| a::as -> a :: (as ++ list2);
+
+let reverse list =
+   let reverse' acc list' = case list' of
      [] -> acc
    | a::as -> reverse' (a::acc) as;
    reverse' [] list;
 
-let map = \f list -> case list of
+let map f list = case list of
   [] -> []
 | a :: as -> f a :: map f as;
 
-let filter = \f list -> case list of
+let filter f list = case list of
   [] -> []
 | a :: as -> if f a then a :: filter f as else filter f as;
 
-let foldr = \step start list -> case list of
+let foldr step start list = case list of
   [] -> start
 | a::as -> step a (foldr step start as);
 
-let foldl = \step start list -> case list of
+let foldl step start list = case list of
   [] -> start
 | a::as -> step (foldl step start as) a;

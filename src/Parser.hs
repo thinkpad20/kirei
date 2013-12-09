@@ -2,7 +2,7 @@
 module Parser (grab) where
 
 import Text.Parsec hiding (parse)
-import Data.List
+import Data.List (intercalate)
 import Control.Applicative hiding ((<|>), many, optional)
 import Data.Monoid
 import Debug.Trace
@@ -11,6 +11,7 @@ import AST
 import Types
 import Data.Char (isLower)
 import qualified Data.Map as M
+import Prelude hiding (foldr)
 
 type UserState = PrecedenceTable
 type PrecedenceTable = M.Map Int [Precedence]
@@ -288,20 +289,21 @@ pIf = If <$ keyword "if"   <*> pExpr
 pLambda :: Parser Expr
 pLambda = do
   keysim "\\" <|> keysim "λ"
-  vars <- many1 pVariable
+  patterns <- many1 pPatternTerm
   keysim "->" <|> keysim "."
   expr <- pExpr
-  return $ lambda vars expr where
+  return $ lambda patterns expr where
     lambda [] e = e
-    lambda (v:vs) e = Lambda (Var v) (lambda vs e)
+    lambda (p:ps) e = Lambda p (lambda ps e)
 
 pLet :: Parser Expr
 pLet = do
   name  <- keyword "let" *> (pVariable <|> pSymbol)
   mType <- optionMaybe (keysim ":" *> pType)
+  patterns <- many pPatternTerm
   body  <- keysim "=" *> pExprs <* keysim ";"
   next  <- optionMaybe pExprs
-  let thisLet = Let name body next
+  let thisLet = Let name (foldr Lambda body patterns) next
   return $ case mType of
     Nothing -> thisLet
     Just typ -> Sig name typ $ Just thisLet
