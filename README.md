@@ -208,20 +208,30 @@ let fib n = case n of
 You can declare algebraic data types with a Haskell-esque syntax:
 
 ```
-datatype List a =
-  Empty
-| Cons a (List a);
+type Bool = False | True;
+type [] a = [] | a :: [a];
 
 let reverse list =
   let loop list2 accumulator = case list2 of
-    Empty -> accumulator
-  | Cons a as -> loop as (Cons a accumulator);
-  loop list Empty;
+    [] -> accumulator
+  | a :: as -> loop as (a :: accumulator);
+  loop list [];
 
 let foo = [1..6];
 let bar = [5,4,3,2,1];
-assert foo == bar;
+assert foo == reverse bar;
 ```
+
+You can optionally declare a type signature for a function using `sig`:
+
+```haskell
+sig map : (a -> b) -> [a] -> [b];
+let map f list = case list of
+  [] -> []
+| a :: as -> f a :: map f as;
+```
+
+This is not generally necessary, however, since all types are inferred with a Hindley-Milner style type inferrence system.
 
 We have two forms of string interpolation. Using `#{ }` inside of a string will call `show` on whatever is inside the curly braces, while using `#[ ]` will put the result in verbatim (it must be a string).
 
@@ -233,11 +243,11 @@ let intro2 = "Hi, my name is " ++ name ++ " and I'm " ++ show age ++ " years old
 assert intro1 == intro2;
 ```
 
-And that's about it. Of course, future syntax will be introduced for type signatures, more syntactic sugar, and a bit more. But that's close to everything.
+And that's about it. Of course, future syntax will be introduced for more syntactic sugar (like `where` clauses), typedefs, type classes, and a bit more. But that's close to everything.
 
 ### Current status and usage
 
-Right now we really don't do very much. We have a tiny "standard library" with a few curried arithmetical and logical functions (+, -, <, or, etc). We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is). And of course, other functions can be written as well :).
+Right now we really don't do very much. We have a tiny "standard library" with a few curried arithmetical and logical functions (+, -, <, or, etc) and a `prelude` module (though we don't have a module system yet...) with some list operations. We're compiling to JavaScript, which is nothing new but offers many advantages like relative ease of code generation and many use cases (pure languages compiled to JavaScript have been done, but tend to produce code which is difficult to read, often for the reasons above). There is still a vast amount to do, but at the least, we can write a factorial function which runs (with some supporting standard functions defined, that is). And of course, other functions can be written as well :).
 
 The Kirei compiler is written in Haskell and requires a Haskell platform (google that if you don't have it -- but I'm guessing you do). To set up Kirei, download the source and compile it as follows:
 
@@ -259,8 +269,8 @@ let fib n =
     else f (m-1) (acc + prev) (acc);
   f n 1 0;
 
-std.writeln ("Factorial of 15: " + (fact 15)) $IO;
-std.writeln ("Fibonacci of 100: " + (fib 100)) $IO;
+println ("Factorial of 15: " + (fact 15)) $IO;
+println ("Fibonacci of 100: " + (fib 100)) $IO;
 ```
 
 You can compile and run this with:
@@ -276,8 +286,7 @@ Factorial of 15: 1307674368000
 You can see the JavaScript generated:
 
 ```javascript
-var std = require("./std");
-var $IO = 0;
+// omitting lots of require statements...
 
 var fact = function (n) {
   if (std.lt(n)(2.0)) {
@@ -307,10 +316,11 @@ var fib = function (n) {
   };
   return f(n)(1.0)(0.0);
 };
-var f = std.writeln(std.add("Factorial of 15: ")(fact(15.0)))(std.writeln(std.add("Fibonacci of 100: ")(fib(100.0)))($IO));
+std.println(std.add("Factorial of 15: ")(fact(15.0)))($IO);
+std.println(std.add("Fibonacci of 100: ")(fib(100.0))($IO);
 ```
 
-If you want to tinker in GHCi, a good place to start is with the `toJs` function, which parses one or more Kirei statements and converts them into a JavaScript `Block`. This has an instance of `Show`, so it can be printed as valid JavaScript. However, to pretty-print the output, use `prettyPrintJS` (or `renderJS` if you want the escape sequences).
+If you want to tinker in GHCi, a good place to start is with the `toJs` function, which parses one or more Kirei statements and converts them into a JavaScript `Block`. This has an instance of `Show`, so it can be printed as valid JavaScript. However, to pretty-print the output, use `ppJS` (or `renderJS` if you want the escape sequences).
 
 ```
 > cd src
@@ -323,7 +333,7 @@ Prelude> :load CompileJS.hs
 var fact = function (n) {if (std.lt(n)(2.0)) {return 1.0;} else {return std.mult(n)(fact(std.sub(n)(1.0)));}};
 *CompileJS> renderJS src
 "\nvar fact = function (n) {\n  if (std.lt(n)(2.0)) {\n    return 1.0;\n  }\n  else {\n    return std.mult(n)(fact(std.sub(n)(1.0)));\n  }\n};"
-*CompileJS> prettyPrintJS src
+*CompileJS> ppJS src
 
 var fact = function (n) {
   if (std.lt(n)(2.0)) {
@@ -342,13 +352,10 @@ Yay! Note that when writing a `\` in GHCi you need to write it with two backslas
 
 A lot!
 
-* All symbolic operators are currently right-associative, which makes some things require parenthesis where they shouldn't. We currently lack the ability to specify these.
-* Standard library is non-existent (ALMOST non-existent. Some basic arithmetic, logical and IO functions are defined)
-* No arrays yet, just linked lists. No functions for string access.
-  - We do have ADTs too, though they need to be integrated into the type system. We have a basic non-balanced BST now.
-* Type system needs to be fleshed out. Basic Hindley-Milner inferrence system is implemented.
-  - The postulated token system should be really just predicated on the type system, with a few small extensions
-  - Type classes will also depend on this
+* All symbolic operators are currently right-associative, which makes some things require parenthesis where they shouldn't. We have the ability to specify these, but it doesn't work yet. Precedence levels, however, can be specified with `infix` statements similar to haskell (no documentation yet).
+* Standard library is almost non-existent. Some basic arithmetic, logical, list and IO functions are defined.
+* No arrays yet, just linked lists. No functions for string access. We do have ADTs, though, so we have a framework for building out. An example source file has a non-balanced binary search tree defined.
+* Still some bugs in the type inferrence system. No type classes yet.
 * No TCO or any other optimizations
 * modules, namespaces, imports
 * A REPL would be nice (but would probably require a full implementation separate from simple javascript compilation)
