@@ -1,0 +1,24 @@
+foo g x =
+  let bar y = g y 1;
+  bar x;
+
+g: a->N->b
+bar: a->b
+x: a
+bar x: b
+foo : (a->N->b) -> a -> b
+
+
+{foo:a} <- see foo
+  g:b <- see g
+    x:c <- see x
+      bar:d <- see bar
+        y:e <- see y
+          RESTRICT b => e -> Number -> f <- g applied to y applied to 1
+          RESTRICT d => e -> f <- bar : (type of y) -> (type of g y 1)
+    unify (d, c -> h)
+      RESTRICT (c => e, h => f)
+
+then foo : (type of g) -> (type of x) -> (type of bar x)
+         : (e -> Number -> f) -> e -> f
+         : (a -> Number -> b) -> a -> b

@@ -1,0 +1,80 @@
+let map f =
+  let map' acc list = case list of
+    [] -> acc
+  | a :: as -> map' (f a :: acc) as;
+  map' [];
+
+let map = \f ->
+  let map' = \acc -> \list -> (
+    (\[] -> acc) list
+  [|]
+    (\a::as -> map' (f a :: acc) as) list
+  [|]
+    __error__
+  );
+  map' [];
+
+let id =       {id: a}
+  \x ->        {id: a, x: b}
+    let y =    {id: a, x: b, y: c}
+      x;       {}
+    y;
+
+let foo x f =
+  let bar y = f y 1;
+  bar x "hi";
+
+let baz p = let q = 6; p [1,q,3];
+
+let foo =         {foo:a}
+  \x ->           {foo:a, x:b}
+    \f ->         {foo:a, x:b, f:c}
+      let bar =   {foo:a, x:b, f:c, bar:d}
+        \y ->     {foo:a, x:b, f:c, bar:d, y:e}
+          f y 1;  {foo:a, x:b, f:c, bar:d, y:e} {c => e -> Number -> f}
+                  {foo:a, x:b, f:c, bar:d} {c => e -> Number -> f, d => e -> f}
+      bar x "hi"; {foo:a, x:b, f:c, bar:d} {c=>e -> Number -> f, d=>b -> String -> g, e=>b, f=>String -> g}
+      // exit \f -> let bar = ...; bar x "hi" = (refine f :=> refine g) = ((e -> Number -> String -> g) -> g)
+    // exit \x -> ... = (refine b :=> refine (e -> Number -> f) -> g) = (b -> (b -> Number -> String -> g) -> g)
+then foo : a -> (a -> Number -> String -> b) -> b
+
+
+
+
+
+inject {map:a} >> infer \f -> let ...                           {map:a} {}
+  inject {f:b} >> infer let ...                                 {map:a, f:b} {}
+    inject {map':c} >> infer \acc -> ...                        {map':c, map:a, f:b} {}
+      inject {acc:d} >> infer \list -> ...                      {map:a, f:b, map':c, acc:d} {}
+        inject {list:e} >> infer (Apply [|] (Apply (\[]...))))  {map:a, f:b, map':c, acc:d, list:e} {}
+          funcT <- infer [|]
+            generalize (\/a.a -> a)
+              return (f -> f)
+          argT <- infer (Apply (\[] -> acc) list)
+            funcT <- infer (\[] -> acc)
+              paramT <- inferPattern []
+                generalize (\/a.[a])
+                  return [g]
+              bodyT <- infer acc
+                generalize (d)
+                  return d
+              refine (paramT -> bodyT)
+                return ([g] -> d)
+            argT <- infer (list)
+              generalize e
+                return e
+            returnT <- newvar
+              return h
+            unify (funcT, argT -> returnT)
+              unify ([g] -> d, e -> h)
+                restrict {d => h, e => [g]}                    {map:a, f:b, map':c, acc:d, list:e} {d=>h, e=>[g]}
+            refine returnT
+              return h
+          returnT <- newvar
+            return i
+          unify (funcT, argT -> returnT)
+            unify (f -> f, h -> i)
+              restrict {f => h, h => i}                        {map:a, f:b, map':c, acc:d, list:e} {d=>h, e=>[g], f=>h, h=>i}
+          refine returnT
+
+

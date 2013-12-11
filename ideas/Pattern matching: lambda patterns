@@ -1,0 +1,78 @@
+Pattern matching: lambda patterns
+
+let listid list = case list of
+  [] -> []
+| a::as -> a::as;
+
+let listid = \list ->
+  (\[] -> []) list
+  [-]
+  (\(a::as) -> a::as) list
+  [-]
+  __matchError__;
+
+so what does \[] -> [] mean?
+
+hmm, this is ambiguous because traditionally we would just override this...
+I guess the distinction here is made because Var "[]" is a constructor.
+
+If we can tell this at parsing time it shouldn't be a problem.
+
+So then we get the form:
+Lambda (TypeName []) (TypeName [])
+
+This suggests a particular parse for patterns, which is
+
+Pattern ::=
+  Variable
+  | Constant
+  | TypeName
+  | Apply Pattern Pattern
+
+For example, [1,a] is
+
+Apply (Apply (Var "::") (Number 1.0)) (Apply (Apply (Var "::") (Var "a")) (Var "[]"))
+
+But what it really is is
+
+Apply (Apply (TypeName "::") (Number 1.0)) (Apply (Apply (TypeName "::") (Var "a")) (TypeName "[]"))
+
+... and we should be able to tell this at parse time, even if we have to maintain some state for symbol constructors.
+
+So then what we have for `listid`'s alternatives is
+
+Lambda (TypeName "[]") (TypeName "[]")
+and
+Lambda (Apply (Apply (TypeName "::") (Var "a")) (Var "as")) (Apply (Apply (TypeName "::") (Var "a")) (Var "as"))
+
+so then the pattern match function works like:
+
+(\pattern -> e1) e2 == if e2 `matches` pattern then e1 else __matchFail__
+
+matches :: Expr -> Expr -> Bool
+(Var _) `matches` _ = True
+(Const c) `matches` e = e == c
+(TypeName c) `matches` (TypeName c') = c == c'
+(Apply a b) `matches` (Apply c d) = a `matches` c && b `matches` d
+
+Essentially patterns are subsets of expressions. We just need to add a constructor parser and we should have everything we need. Then we just need to be able to type check patterns, which shouldn't be much new.
+
+OK so type checking lambdas... let's say we have
+
+let not b = case b of True -> False | b -> True;
+
+not = \b ->
+  (\True -> False) b
+  [-]
+  (\a    -> True) b
+  [-]
+  __matchError__
+
+so we need to type check first `\b -> (...) b [-] (...) b [-] __matchError`
+
+then we need to type check (\True -> False) b
+which means we need to check (\True -> False)
+If it's just a var, we keep doing what we're doing... but otherwise we need to check the expr.
+
+So this is almost the same as checking, except that
+when we encounter a variable, we make a new type for it, rather than looking it up.

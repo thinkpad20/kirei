@@ -30,13 +30,10 @@ data Env = Env {
 -- | It's useful to be able to pull all of the free variables out of our
 -- environment.
 instance FreeVars Env where
-  free env =
-    let freeFromTmap = free (tmap env) in
-    let freeFromRestrs = unionAll (free <$> rs env) in
-    freeFromTmap `S.union` freeFromRestrs `S.union` used env
+  free env = free (tmap env) `S.union` used env
 
 -- | @defaultEnv@ stores some signatures of built-in types in @initials@.
-defaultEnv = Env initials M.empty S.empty ["%root%"]
+defaultEnv = Env initials M.empty S.empty ["(root)"]
 
 -- | @runInferWith@ runs the inferrer on an expression with a specific
 -- environment provided.
@@ -72,27 +69,52 @@ maybeT = TApply (TConst "Maybe")
 
 initials = TM $ M.fromList
   [
-    ("__matchFail__", witha a),
-    ("__matchError__", witha a),
-    ("[-]", witha $ a :=> a :=> a),
-    ("__listRange__", witha $ a :=> a :=> listT a)
+    --("__matchFail__", witha a),
+    --("__matchError__", witha a),
+    --("[-]", witha $ a :=> a :=> a),
+    --("__listRange__", witha $ a :=> a :=> listT a)
   ]
   where witha = Polytype ["a"]
         a = TVar "a"
         b = TVar "b"
 
 pushName :: Name -> Inferrer ()
-pushName name = modify $ (\env -> env {namespace = name : (namespace env)})
+pushName name = modify $ (\env -> env {namespace = name : namespace env})
 
 popName :: Inferrer Name
 popName = do
   name <- get <!> namespace <!> head
-  modify $ (\env -> env {namespace = tail (namespace env)})
+  modify $ (\env -> env {namespace = tail $ namespace env})
   return name
+
+getFullName :: Name -> [Name] -> Name
+getFullName name nspace = intercalate "." $ reverse $ name : nspace
+
+-- | @lookup@ looks in the current namespace for a variable, as opposed to
+-- deepLookup which will go backwards.
+lookup :: Name -> Inferrer (Maybe Polytype)
+lookup name = do
+  fullname <- get <!> namespace <!> getFullName name
+  get <!> tmap <!> tmLookup fullname
+
+-- | @deepLookup@ recurses backwards through the namespace, trying all
+-- possible names until it finds a matching scheme (or returns @Nothing@)
+deepLookup :: Name -> Inferrer (Maybe Polytype)
+deepLookup name = do
+  nspace <- namespace <$> get
+  recurse nspace
+  where recurse [] = return Nothing
+        recurse nspace =
+          get <!> tmap <!> tmLookup (getFullName name nspace) >>= \case
+            Nothing -> recurse (tail nspace)
+            Just scheme -> return $ Just scheme
 
 ------------------------------------------------------------------------------
 ----- Type Inferrence algorithms
 ------------------------------------------------------------------------------
+
+monad >>== function = monad >>= \a -> function a >> return a
+infixl 1 >>==
 
 -- | @infer@ takes an expression and produces a type for that expression.
 -- the @Inferrer@ state will also track all of the inferrences made during
@@ -102,36 +124,36 @@ infer expr = case expr of
   Number _ -> return num
   String _ -> return str
   Tuple es -> tuple <$> (mapM infer es >>= mapM refine)
-  Var v -> get <!> tmap <!> tmLookup v >>= \case
+  Var v -> deepLookup v >>= \case
     Nothing -> error $ "Variable `" ++ v ++ "` not defined in scope"
     Just t -> instantiate t
   TypeName n -> infer (Var n)
   Let name expr next -> do
-    -- grab a copy of the current env
-    env <- get
-    pushName name
-    -- infer the expression with name injected into the map
-    (var, inferred) <- inject name expr
-    -- unify the types and refine the new variable
-    t <- unify var inferred >> refine var
-    -- restore the env, generalize the type and store it
-    -- at this step we should be removing variables which aren't in scope anymore... how do we track that?
-    -- perhaps using the namespace? or... don't worry about this and leave that to the lambdas?
-    popName
-    put env >> generalize t >>= add name >> handle next
+    t <- lookup name >>= \case
+      -- if the type has been declared already, we can return it
+      Just someType -> instantiate someType
+      -- if it doesn't exist, make a new one and add it to the env
+      Nothing -> newvar >>== add name . bare
+    -- push a new namespace, infer the expression and unify it, then pop
+    pushName name >> infer expr >>= unify t >> popName
+    -- refine the type, generalize it, register it in the scope and move on
+    refine t >>= generalize >>= register name >> handle next
   Lambda pattern expr -> do
     -- infer the type of the pattern
     patternT <- inferPattern pattern
-    env <- get
-    bodyT <- infer expr
-    refine (patternT :=> bodyT) -- <* put env
+    bodyT    <- infer expr
+    -- removes all of the variables in the pattern
+    cleanup pattern
+    refine (patternT :=> bodyT)
     where
       inferPattern pat = case pat of
         -- if it's a variable, give it a new type and add it to the env
-        Var v -> newvar >>= \t -> add v (bare t) >> return t
+        Var v -> lookup v >>= \case
+          Nothing -> newvar >>= \t -> add v (bare t) >> return t
+          Just _ -> error $ "`" ++ v ++ "` is already defined in scope"
         -- for a typename, we can just use the regular infer behavior
         TypeName n -> infer pat
-        -- tuples are similar to normal expressions
+        -- tuples are almost the same as normal expressions
         Tuple es -> tuple <$> (mapM inferPattern es >>= mapM refine)
         -- literals get returned as-is
         Number _ -> return num
@@ -144,6 +166,11 @@ infer expr = case expr of
           unify aT (bT :=> rT)
           refine rT
         otherwise -> error $ "Illegal expression " ++ show pat ++ " in pattern"
+      cleanup pattern = case pattern of
+        Var v -> remove v
+        Apply a b -> cleanup a >> cleanup b
+        Tuple es -> mapM_ cleanup es
+        _ -> return ()
   Apply func arg -> do
     -- infer the function type
     funcT <- infer func
@@ -163,17 +190,25 @@ infer expr = case expr of
   _ -> error $ "Can't handle " ++ show expr ++ " (yet?)"
   where
     newvar = snd <$> newName "a"
-    inject name expr = do
-      new <- newvar
-      inferred <- add name (bare new) >> infer expr
-      return (new, inferred)
-    add name polytype =
-      modify (\env -> env { tmap = env ! tmap ! tmInsert name polytype })
+    add name polytype = do
+      fullname <- get <!> namespace <!> getFullName name
+      modify (\env -> env { tmap = env ! tmap ! tmInsert fullname polytype })
     handle next = case next of
       -- if there's a next expression infer that
       Just next -> infer next
-      -- else just return the unit
+      -- else just return the empty tuple type
       Nothing   -> return $ tuple []
+    register :: Name -> Polytype -> Inferrer ()
+    register = add
+    remove name = do
+      fullname <- get <!> namespace <!> getFullName name
+      prnt$ "Removing name " ++ name
+      env <- get
+      prnt$ "current env is " ++ show env
+      lookup name >>= \case
+        Just (Polytype [] (TVar tname)) -> removeUsedName tname
+        Nothing -> error $ "Weird thing when removing " ++ fullname
+      modify (\env -> env {tmap = env ! tmap ! tmDelete fullname})
 
 prnt :: String -> Inferrer ()
 prnt = lift . putStrLn
@@ -196,9 +231,14 @@ instantiate (Polytype vars t) = do
 -- type's bound variables listed in the polytypes' variable list.
 generalize :: Type -> Inferrer Polytype
 generalize t = do
+  env <- get
+  prnt $ "generalizing " ++ show t ++ " in env " ++ show env
   let freeInType   = free t
+  prnt $ "the free variables in this type are " ++ show freeInType
   freeInScope     <- free <$> get
+  prnt $ "the free variables in the scope are " ++ show freeInScope
   let actuallyFree = freeInType S.\\ freeInScope
+  prnt $ "the actual free variables are " ++ show actuallyFree
   pairs <- mapM newName (S.toList actuallyFree)
   let newNames = snd ~> (\(TVar v) -> v) <$> pairs
       subs = M.fromList pairs
@@ -206,6 +246,11 @@ generalize t = do
 
 addUsedName :: Name -> Inferrer ()
 addUsedName name = modify (\env -> env {used = S.insert name (env!used)})
+
+removeUsedName :: Name -> Inferrer ()
+removeUsedName name = do
+  prnt $ "removing type named " ++ show name
+  modify (\env -> env {used = S.delete name (env!used)})
 
 -- | @newName@ takes a starting name and returns a tuple of that name paired
 -- with a new type variable which is unused in the current scope.
@@ -249,17 +294,65 @@ unify t1 t2 = do
 -- | @refine@ takes a type and traces it through the restrictions map,
 -- applying all restrictions it finds, unless it detects a cycle in the
 -- restrictions, for example a mapping from @a@ to @b -> a@, in which case
--- it raises an error.
+-- it raises an error. It has the side effect of updating the environment
+-- with a new set of restrictions which don't involve the type.
+--refine :: Type -> Inferrer Type
+--refine t = r S.empty t where
+--  r :: S.Set Name -> Type -> Inferrer Type
+--  r seen t = case t of
+--    TConst name -> return $ TConst name
+--    TVar v -> case S.member v seen of
+--      True -> error "Cycle in types"
+--      False -> get <!> rs <!> M.lookup v >>= \case
+--        Nothing -> return t
+--        Just t' -> r (S.insert v seen) t'
+--    a :=> b -> pure (:=>) <*> r seen a <*> r seen b
+--    TApply a b -> pure TApply <*> r seen a <*> r seen b
+--    TTuple ts -> TTuple <$> mapM (r seen) ts
+
+{-
+
+ok so we _only_ want to update a type variable
+so we
+1) find the thing it's mapped to, IF it exists,
+otherwise return a TVar with that type name
+2) if we found something it's mapped to, refine THAT,
+  and then make all of the
+
+
+-}
+-- { a: }
+
+
 refine :: Type -> Inferrer Type
-refine t = r S.empty t where
-  r :: S.Set Name -> Type -> Inferrer Type
-  r seen t = case t of
-    TConst name -> return $ TConst name
-    TVar v -> case S.member v seen of
-      True -> error "Cycle in types"
-      False -> get <!> rs <!> M.lookup v >>= \case
-        Nothing -> return t
-        Just t' -> r (S.insert v seen) t'
-    a :=> b -> pure (:=>) <*> r seen a <*> r seen b
-    TApply a b -> pure TApply <*> r seen a <*> r seen b
-    TTuple ts -> TTuple <$> mapM (r seen) ts
+refine (TVar name) = get <!> rs <!> M.lookup name >>= \case
+  Nothing -> return $ TVar name
+  Just t -> do
+    modify $ (\env -> env { rs = M.delete name (rs env)})
+    update name t >> return t
+  where
+    update name type_ = do
+      modify $ (\env -> env { rs = fmap update' (rs env)}) where
+        -- ok so we're looking to update all of the type have a type,
+        -- if it's constant we don't need to do anything
+        update' origType = case origType of
+          TConst n -> TConst n
+        -- if it's a variable, we need to make sure we haven't already seen it
+          TVar n | name == n -> type_
+                 | otherwise -> TVar n
+          TApply a b -> update' a `TApply` update' b
+          TTuple ts -> TTuple $ map update' ts
+          t1 :=> t2 -> update' t1 :=> update' t2
+refine type_ = return type_
+
+-- | @updateRs@ updates the restrictions table, replacing each variable with
+-- its refinement.
+-- For example, if our restrictions table currently has
+-- @{a => b->c, d => N -> a, c => b}@, then after @updateRs@ it would be
+-- @{d => N -> b -> b}@.
+-- @{a =>  }@
+ --updateRs :: Inferrer ()
+
+-- we could also do this work in refine. So for example, with the above dictionary,
+-- refine a would produce
+-- @{d => N -> b -> b, c => b}

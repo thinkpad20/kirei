@@ -1,0 +1,20 @@
+Idea for let-less syntax... still whitespace insensitive!
+
+Of course parsing would be either slower (all expressions would need to be `try`ed in case they were actually let statements... that said we would probably just try parsing an expression and if that failed we would) or way more complicated.
+
+foo x =
+  y = 3;
+  z q = q * y;
+  z x;
+
+foo x = z x where
+  y = 3 and
+  z q = q * y;
+
+map f = map' acc list = case list of [] -> acc | x::xs -> map' (f x::acc) xs; map' [];
+
+map : (a -> b) -> (f :~ Functor) a -> f b
+map f = map' [] where
+  map' acc list = case list of
+    [] -> acc
+  | x::xs -> map' (f x::acc) xs;

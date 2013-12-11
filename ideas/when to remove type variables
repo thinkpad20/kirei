@@ -1,0 +1,13 @@
+thing to consider:
+
+in a lambda where f is from an earlier scope, i.e.
+
+let foo = \fn ->  <---- let's say that here fn gets the type `b`
+  let bar = \x ->  <--- let's say that bar gets `c` and x gets `d`
+    fn x; <--- here we're going to `unify (b, d :=> e)`; now b depends on d (i.e. type of fn depends on type of temporary variable d)
+    <--- at this point we've judged bar to have the type d :=> e -- note, the type of variable x is still hanging around
+    <---- ah, but is it? when we generalize bar back in our environment, we should be able to see that bar : \/a. (a -> e) -> e... right? need to thinking about this...
+  bar 1; <--- here we're going to `unify (d :=> e, Number :=> f)`. Now finally d gets unified with Number, and we see fn : b, b=> d->e, d=> Number, e => f, so refined type of fn is Number -> f
+  so in the end we generalize f to be \/a.a, and the type of foo is \/a.(Number -> a) -> a
+
+All this is well and good, but the important question is, when can we stop worrying about `d`? In general, when can we remove type variables from our environment?

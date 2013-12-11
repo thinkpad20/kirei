@@ -1,0 +1,9 @@
+type [] a = [] | a :: [a];
+
+sig reverse : [a] -> [a];
+
+let map f list =
+  let map' acc list' = case list' of
+    [] -> acc
+  | a::as -> map' (f a::acc) as;
+  reverse (map' [] list);

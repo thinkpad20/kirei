@@ -6,6 +6,7 @@ module Types (Type(..),
               unionAll, apply,
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
+              tmDelete,
               num, bool, str, tuple,
               bare, barev) where
 
@@ -87,6 +88,7 @@ infixl 4 `tmUnion`
 tmElems (TM m) = M.elems m
 tmEmpty = TM M.empty
 tmSingle name typ = TM $ M.singleton name typ
+tmDelete name (TM m) = TM $ M.delete name m
 
 apply :: M.Map Name Type -> Type -> Type
 apply subs t@(TVar name) = M.findWithDefault t name subs

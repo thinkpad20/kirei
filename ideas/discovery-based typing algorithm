@@ -1,0 +1,65 @@
+foo g x =
+  let bar y = g y 1;
+  bar x;
+
+A "discovery algorithm" would go like this:
+discover `foo` ->
+  function of two variables, `g` and `x` so must be (type of g) -> (type of x) -> a
+  discover g ->
+    g applied to y 1 so g must be (type of y) -> N -> b
+  discover x ->
+    x operated on by bar so x must be (arg type of bar)
+  discover bar ->
+    function of one variable `y` so must be (type of y) -> c
+    discover `y` ->
+      operated on by `g` so y must be (arg type of g)
+
+so here's what we have:
+  {foo: (type g) -> (type x) -> a
+   bar: (type y) -> c
+   g: (type y) -> N -> b
+   x: (argtype bar)
+   y: (argtype g)}
+
+Let's follow them starting with foo:
+
+refine foo : (typeof g) -> (typeof x) -> a
+  refine g ->
+    refine y ->
+      argtype g ->
+        cycle detected ->
+          return newvar ->
+            return `d`
+    return d -> N -> b
+  refine x ->
+    getargtype bar ->
+      refine y ->
+        return d
+      return d
+    return d
+  return (d -> N -> b) -> d
+refine bar ->
+  refine y ->
+    return d
+  return d -> c
+
+We need some way to recognize that `c` and `a` are the same.
+
+How about:
+
+let id x = let y = x; y;
+
+discover `id` ->
+  (typeof x) -> newvar `a`
+  discover `x` ->
+    nothing operates on x, no restrictions, newvar `b`
+  discover `y` ->
+    y = x so y : (typeof x)
+  discover
+
+
+
+  We have a cycle from y to g so we can type that as "anything"
+
+so collapsing everything
+
