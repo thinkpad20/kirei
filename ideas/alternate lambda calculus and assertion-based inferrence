@@ -1,0 +1,140 @@
+data Expr =
+  Number Double
+  | String String
+  | Var Name
+  | Lambda [Expr] Expr
+  | Apply [Expr]
+  | Let Name Expr
+
+discover :: Expr -> M.Map Name Type
+
+
+discover expr = case expr of
+  Number _ -> return num
+  String _ -> return str
+  Var n -> lookup n >>= instantiate
+  Lambda names expr -> do
+    argTs <- mapM (discoverName expr) names
+    exprT <- discover expr
+    return $ foldr (:=>) exprT argTs
+  Apply exprs -> do
+
+
+discoverName :: Expr -> Name -> S.Set TypeAssertion
+
+// discoverName should return something like "based on this expression,
+// we produce these sets of type assertions."
+// For example, in \x -> x <!> 1, this is Lambda [x] (Apply [<!> x 1]),
+// then we should report that x is the first argument of <!>.
+
+let map f =
+  let map' acc list = case list of
+    [] -> acc
+  | x::xs -> map' (f x) xs;
+  map' [];
+
+let map = \f ->
+  let map' = \acc -> \list -> (
+    (\[] -> acc) list
+  `__matchOr__`
+    (\x::xs -> map' (f x) xs) list
+  )
+
+Let map
+  (Lambda [f]
+    (Let map'
+      (Lambda [acc, list]
+        (Apply [
+          _matchOr_
+          , (Apply [
+            (Lambda [[]] acc)
+            , list])
+          , (Apply [
+            (Lambda [Apply [::, x, xs]] (Apply [map', Apply [f x], xs]))
+            , list])]))))
+
+data Assertion = IsTypeof Expr
+               | IsArgOf Expr
+               | TakesAsArg Expr
+
+Assertions:
+INITIALLY {
+  :: : a -> [a] -> [a]
+  [] : [a]
+  __matchOr__ : a -> a -> a
+}
+f: { TakesAsArg x }
+x: {IsArgOf ::, IsArgOf f}
+f x: { IsArgOf map' }
+map': { TakesAsArg (f x), TakesAsArg [] }
+map' (f x): {TakesAsArg xs}
+xs: {IsArgOf (:: x), IsArgOf (map' (f x))}
+acc: {}
+list: {IsArgOf (\[] -> acc), IsArgOf (\x::xs -> map' (f x) xs)}
+(\[] -> acc): {TakesAsArg list}
+(\x::xs -> map' (f x) xs): {TakesAsArg list}
+(\[] -> acc) list: {IsArgOf __matchOr__}
+(\x::xs -> map' (f x) xs) list: { IsArgOf (__matchOr__ (\[] -> acc)) }
+
+explore expr :: Explorer ()
+explore expr = case expr of
+  Lambda a b -> explore' a b
+  Let name a -> do
+    push
+    addAssertion (Var name) (IsTypeOf a)
+    explore a
+    pop
+  Apply a b -> do
+    addAssertion a (TakesAsArg b)
+    explore' a b
+  If c t f -> do
+    addAssertion c (HasType (TypeName "True"))
+    addAssertion t (IsTypeOf f)
+    explore' t f
+  otherwise -> return ()
+  where explore' a b = explore a >> explore b
+
+
+let fact n =
+  let fact' acc n =
+    if n < 1 then acc else fact' (acc*n) (n-1);
+  fact' 1 n;
+
+{}
+{fact: {IsTypeOf (\n -> ...)}, (\n->...): {TakesAsArg n}}
+{
+  fact': {IsTypeOf (\acc -> ...)},
+  (\acc -> ...): {TakesAsArg acc},
+  (\n -> ...)}
+
+
+
+
+
+
+
+
+
+
+
+
+
+foo a b = case b of [] -> a
+
+hmm but idk how to enforce that (f x) is of type b. Maybe a "returns Type?"
+Or map expressions to assertion sets....
+
+foo x = (\y -> y + 1) x
+
+x: {IsArgOf foo, IsArgOf (\y -> y + 1)}
+
+
+let id = \x -> let y = x; y; -> {id: {IsTypeOf (\x -> ...)}, x: {}, y: {IsTypeOf x} }
+
+inferring (\x -> let y = x; y;), we discoverName "x" (yielding {}), then infer
+the function body (y, which IsTypeOf x). Implicitly, {} is equivalent to
+"isTypeOf self", so y IsTypeOf x means \x -> y means (TypeOf x -> TypeOf x)
+which is the same as \/a.a->a.
+
+Shows promise?
+

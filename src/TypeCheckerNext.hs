@@ -64,19 +64,20 @@ typeCheckEnv input = do
   expr <- desugar <$> grab input
   snd <$> runInfer expr
 
-listT = TApply (TConst "[]")
-maybeT = TApply (TConst "Maybe")
-
 initials = TM $ M.fromList
   [
-    --("__matchFail__", witha a),
-    --("__matchError__", witha a),
-    --("[-]", witha $ a :=> a :=> a),
-    --("__listRange__", witha $ a :=> a :=> listT a)
+    ("(root).[]", witha $ listT a),
+    ("(root).::", witha $ a :=> listT a :=> listT a),
+    ("(root).__matchFail__", witha a),
+    ("(root).__matchError__", witha a),
+    ("(root).[-]", witha $ a :=> a :=> a),
+    ("(root).__listRange__", witha $ a :=> a :=> listT a)
   ]
   where witha = Polytype ["a"]
         a = TVar "a"
         b = TVar "b"
+        listT = TApply (TConst "[]")
+        maybeT = TApply (TConst "Maybe")
 
 pushName :: Name -> Inferrer ()
 pushName name = modify $ (\env -> env {namespace = name : namespace env})
@@ -202,9 +203,6 @@ infer expr = case expr of
     register = add
     remove name = do
       fullname <- get <!> namespace <!> getFullName name
-      prnt$ "Removing name " ++ name
-      env <- get
-      prnt$ "current env is " ++ show env
       lookup name >>= \case
         Just (Polytype [] (TVar tname)) -> removeUsedName tname
         Nothing -> error $ "Weird thing when removing " ++ fullname
@@ -231,14 +229,9 @@ instantiate (Polytype vars t) = do
 -- type's bound variables listed in the polytypes' variable list.
 generalize :: Type -> Inferrer Polytype
 generalize t = do
-  env <- get
-  prnt $ "generalizing " ++ show t ++ " in env " ++ show env
   let freeInType   = free t
-  prnt $ "the free variables in this type are " ++ show freeInType
   freeInScope     <- free <$> get
-  prnt $ "the free variables in the scope are " ++ show freeInScope
   let actuallyFree = freeInType S.\\ freeInScope
-  prnt $ "the actual free variables are " ++ show actuallyFree
   pairs <- mapM newName (S.toList actuallyFree)
   let newNames = snd ~> (\(TVar v) -> v) <$> pairs
       subs = M.fromList pairs
@@ -249,7 +242,6 @@ addUsedName name = modify (\env -> env {used = S.insert name (env!used)})
 
 removeUsedName :: Name -> Inferrer ()
 removeUsedName name = do
-  prnt $ "removing type named " ++ show name
   modify (\env -> env {used = S.delete name (env!used)})
 
 -- | @newName@ takes a starting name and returns a tuple of that name paired
@@ -296,42 +288,20 @@ unify t1 t2 = do
 -- restrictions, for example a mapping from @a@ to @b -> a@, in which case
 -- it raises an error. It has the side effect of updating the environment
 -- with a new set of restrictions which don't involve the type.
---refine :: Type -> Inferrer Type
---refine t = r S.empty t where
---  r :: S.Set Name -> Type -> Inferrer Type
---  r seen t = case t of
---    TConst name -> return $ TConst name
---    TVar v -> case S.member v seen of
---      True -> error "Cycle in types"
---      False -> get <!> rs <!> M.lookup v >>= \case
---        Nothing -> return t
---        Just t' -> r (S.insert v seen) t'
---    a :=> b -> pure (:=>) <*> r seen a <*> r seen b
---    TApply a b -> pure TApply <*> r seen a <*> r seen b
---    TTuple ts -> TTuple <$> mapM (r seen) ts
-
-{-
-
-ok so we _only_ want to update a type variable
-so we
-1) find the thing it's mapped to, IF it exists,
-otherwise return a TVar with that type name
-2) if we found something it's mapped to, refine THAT,
-  and then make all of the
-
-
--}
--- { a: }
-
-
+-- For example, if our restrictions table currently has
+-- @{a => b->c, d => N -> a, c => b}@, then after @updateRs@ it would be
+-- @{d => N -> b -> b}@.
 refine :: Type -> Inferrer Type
-refine (TVar name) = get <!> rs <!> M.lookup name >>= \case
-  Nothing -> return $ TVar name
-  Just t -> do
-    modify $ (\env -> env { rs = M.delete name (rs env)})
-    update name t >> return t
+refine (TVar name) = do
+  prnt $ "refining " ++ show name
+  get <!> rs <!> M.lookup name >>= \case
+    Nothing -> return $ TVar name
+    Just t -> do
+      modify $ (\env -> env { rs = M.delete name (rs env)})
+      update name t >> return t
   where
     update name type_ = do
+      prnt $ "updating types containing " ++ show name
       modify $ (\env -> env { rs = fmap update' (rs env)}) where
         -- ok so we're looking to update all of the type have a type,
         -- if it's constant we don't need to do anything
@@ -344,15 +314,3 @@ refine (TVar name) = get <!> rs <!> M.lookup name >>= \case
           TTuple ts -> TTuple $ map update' ts
           t1 :=> t2 -> update' t1 :=> update' t2
 refine type_ = return type_
-
--- | @updateRs@ updates the restrictions table, replacing each variable with
--- its refinement.
--- For example, if our restrictions table currently has
--- @{a => b->c, d => N -> a, c => b}@, then after @updateRs@ it would be
--- @{d => N -> b -> b}@.
--- @{a =>  }@
- --updateRs :: Inferrer ()
-
--- we could also do this work in refine. So for example, with the above dictionary,
--- refine a would produce
--- @{d => N -> b -> b, c => b}
