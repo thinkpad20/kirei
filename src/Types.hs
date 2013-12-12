@@ -1,12 +1,13 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 module Types (Type(..),
               Polytype(..),
-              FreeVars(..),
               TypeMap(..),
+              Types(..),
+              Substitutions(..),
               unionAll, apply,
               tmUnion, tmInsert, tmSingle,
               tmElems, tmEmpty, tmLookup,
-              tmDelete,
+              tmDelete, (•), noSubstitutions,
               num, bool, str, tuple,
               bare, barev) where
 
@@ -43,30 +44,50 @@ instance Render Type where
 
 data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
 
--- | The FreeVars class describes objects which can contain free type
--- variables, i.e. those which are not determined by their containers.
-class FreeVars a where
-  free :: a -> S.Set Name
+-- | The Types class describes objects which can contain free type
+-- variables, i.e. those which are not determined by their containers,
+-- and things to which we can apply type substitutions
+class Types a where
+  free :: a -> S.Set String
+  applySub :: Substitutions -> a -> a
 
-instance FreeVars Type where
+instance Types Type where
   free (TVar name) = S.singleton name
   free (TConst _) = S.empty
   free (TTuple ts) = map free ts ! unionAll
   free (TApply t1 t2) = free t1 `S.union` free t2
   free (t1 :=> t2) = free t1 `S.union` free t2
 
-instance FreeVars Polytype where
-  free (Polytype vars t) = (free t) S.\\ S.fromList vars
+  applySub s (TVar n) = case M.lookup n s of
+    Nothing  -> TVar n
+    Just t   -> t
+  applySub s (TApply t1 t2) = applySub s t1 `TApply` applySub s t2
+  applySub s (t1 :=> t2) = applySub s t1 :=> applySub s t2
+  applySub s (TTuple ts) = TTuple $ applySub s <$> ts
+  applySub _ t = t
 
-data TypeMap = TM (M.Map Name Polytype)
+instance Types Polytype where
+  free (Polytype vars t) = (free t) S.\\ (S.fromList vars)
+  applySub s (Polytype vars t) =
+    Polytype vars (applySub (foldr M.delete s vars) t)
 
-instance FreeVars TypeMap where
-  free (TM env) = free <$> env ! unionAll
+instance Types a => Types [a] where
+  free l = mconcat (map free l)
+  applySub s = map (applySub s)
 
-instance Show TypeMap where
-  show (TM env) = "{" ++ (intercalate ", " $ map toS pairs) ++ "}"
-    where pairs = M.toList env
-          toS (key, val) = key ++ ": " ++ render 0 val
+newtype TypeMap = TM (M.Map Name Polytype) deriving (Show)
+
+instance Types TypeMap where
+  free (TM env) = free (M.elems env)
+  applySub s (TM env) = TM (applySub s <$> env)
+
+type Substitutions = M.Map String Type
+
+noSubstitutions :: Substitutions
+noSubstitutions = M.empty
+
+(•) :: Substitutions -> Substitutions -> Substitutions
+s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 
 instance Render TypeMap where
   render _ (TM env) = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
@@ -80,7 +101,6 @@ instance Render Polytype where
 instance Render () where
   render _ () = "()"
 
-unionAll = foldl' S.union S.empty
 tmLookup name (TM m) = M.lookup name m
 tmInsert name typ (TM m) = TM $ M.insert name typ m
 tmUnion (TM m1) (TM m2) = TM $ M.union m1 m2

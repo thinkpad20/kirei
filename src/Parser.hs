@@ -288,9 +288,9 @@ pIf = If <$ keyword "if"   <*> pExpr
 
 pLambda :: Parser Expr
 pLambda = do
-  keysim "\\" <|> keysim "λ"
+  keysim "\\"
   patterns <- many1 pPatternTerm
-  keysim "->" <|> keysim "."
+  keysim "->"
   expr <- pExpr
   return $ lambda patterns expr where
     lambda [] e = e

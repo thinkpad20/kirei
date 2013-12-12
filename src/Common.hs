@@ -2,13 +2,14 @@
 module Common ((~>), (!), (<$>), (<!>),
                pure, (<*>), (<$), (*>),
                (<*), intercalate, Name,
-               foldl', foldr, isInt,
-               Render(..)) where
+               foldl', foldr, isInt, unionAll,
+               Render(..), mconcat, (<>)) where
 
 import Prelude hiding (foldl', foldr)
 import Data.Foldable (foldl', foldr)
 import Data.List (intercalate)
 import Control.Applicative
+import Data.Monoid
 import qualified Data.Set as S
 
 (~>) = flip (.)
@@ -37,3 +38,5 @@ isIntTo :: (Integral a, RealFrac b) => b -> a -> Bool
 isIntTo x n = (round $ 10^(fromIntegral n)*(x-(fromIntegral $ round x)))==0
 
 isInt x = isIntTo x 10
+
+unionAll = foldl' S.union S.empty

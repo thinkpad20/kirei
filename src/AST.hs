@@ -72,7 +72,7 @@ prettyExpr e = case e of
     sh = map s ~> int "|"
     s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
   Tuple es -> "(" ++ int ", " (prettyExpr <$> es) ++ ")"
-  Lambda p e -> "\\" ++ prettyExpr p ++ " -> " ++ prettyExpr e
+  Lambda p e -> "λ" ++ prettyExpr p ++ " -> " ++ prettyExpr e
   List (ListLiteral es) -> "[" ++ int ", " (prettyExpr <$> es) ++ "]"
   List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++
                                     prettyExpr stop ++ "]"
@@ -118,7 +118,7 @@ caseToLambda expr = case expr of
   where
     compile _ [] = Var "__matchError__"
     compile e ((p,r):ms) =
-      Apply (Apply (Symbol "[-]") (Apply (Lambda p r) e)) (compile e ms)
+      Apply (Apply (Var "__matchOr__") (Apply (Lambda p r) e)) (compile e ms)
 
 {-
 step :: Expr -> Expr -> Expr
