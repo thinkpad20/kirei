@@ -116,9 +116,9 @@ caseToLambda :: Expr -> Expr
 caseToLambda expr = case expr of
   Case e ms -> compile e ms
   where
-    compile _ [] = Var "__matchError__"
+    compile _ [] = Var "(error)"
     compile e ((p,r):ms) =
-      Apply (Apply (Var "__matchOr__") (Apply (Lambda p r) e)) (compile e ms)
+      Apply (Apply (Var "(or)") (Apply (Lambda p r) e)) (compile e ms)
 
 {-
 step :: Expr -> Expr -> Expr
@@ -130,7 +130,7 @@ desugarList expr = case expr of
   List lit -> case lit of
     ListLiteral es -> foldr cons (TypeName "[]") es where
       cons a b = Apply (Apply (TypeName "::") a) b
-    ListRange start stop -> Apply (Apply (Var "__listRange__") start) stop
+    ListRange start stop -> Apply (Apply (Var "(range)") start) stop
   If c t f -> If (rec c) (rec t) (rec f)
   Apply a b -> Apply (rec a) (rec b)
   Comma a b -> Comma (rec a) (rec b)

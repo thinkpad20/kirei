@@ -26,7 +26,7 @@ generalize env t = Polytype vars t
 
 data InferrerEnv = InferrerEnv (M.Map String Type)
 
-data InferrerState = InferrerState { inferSupply :: Int }
+data InferrerState = InferrerState { inferSupply :: Name }
 
 type Inferrer = ErrorT String (ReaderT InferrerEnv (StateT InferrerState IO))
 
@@ -34,9 +34,7 @@ runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
 runInferrer t =
     runStateT (runReaderT (runErrorT t) initInferrerEnv) initInferrerState
   where initInferrerEnv = InferrerEnv M.empty
-        initInferrerState = InferrerState {
-                              inferSupply = 0
-                            }
+        initInferrerState = InferrerState { inferSupply = "b" }
 
 -- | Get a fresh new type variable to use
 newTypeVar :: String -> Inferrer Type
@@ -44,9 +42,12 @@ newTypeVar prefix = do
   -- get the current state
   s <- get
   -- increment the inferSupply
-  put s { inferSupply = inferSupply s + 1 }
+  modify $ \s -> s { inferSupply = next (inferSupply s) }
   -- wrap it in a type variable and return it
-  return $ TVar $ prefix ++ show (inferSupply s)
+  return $ TVar $ inferSupply s
+  where
+    next name = let (c:cs) = reverse name in
+      if c < 'z' then reverse $ succ c : cs else 'a' : (map (\_ -> 'a') name)
 
 instantiate :: Polytype -> Inferrer Type
 instantiate s@(Polytype vars t) = do
@@ -104,8 +105,9 @@ infer env@(TM tenv) expr = case expr of
     let env' = tmUnion (TM $ (bare <$> vars)) env
     --prnt $ "env is now " ++ show env'
     (subs, bodyT) <- infer env' body
-    prnt $ "inferred the body type of " ++ render 0 body ++ " to be " ++ render 0 bodyT
-    prnt $ "returning " ++ show (applySub subs paramT :=> bodyT)
+    prnt $ "LAMBDA inferred the body type of " ++ render 0 body ++ " to be " ++ render 0 bodyT
+    prnt $ "LAMBDA returning " ++ render 0 (applySub subs paramT :=> bodyT)
+    prnt $ "this means " ++ render 0 expr ++ " is of type " ++ (render 0 $ applySub subs (applySub subs paramT :=> bodyT))
     return (subs, applySub subs paramT :=> bodyT)
   Apply e1 e2 -> do
     tv <- newvar
@@ -124,10 +126,13 @@ infer env@(TM tenv) expr = case expr of
     prnt $ "env1 is " ++ render 0 env1
     -- infer expr with that environment
     (exprSubs, exprT) <- infer env1 expr'
-    prnt $ "inferring `" ++ render 0 expr' ++ "` gave us " ++ show exprT
-    subs <- unify newT exprT
+    prnt $ "inferring `" ++ render 0 expr' ++ "` gave us " ++ render 0 exprT ++ ", which after subs is " ++ (render 0 $ applySub exprSubs exprT)
+    let exprT' = applySub exprSubs exprT
+    subs <- unify newT exprT'
+    prnt $ "unifying " ++ render 0 newT ++ " with " ++ (render 0 $ exprT') ++ " gave us " ++ render 0 subs
     -- generalize the type with respect to previous env
-    let genT = generalize (applySub (subs • exprSubs) env) exprT
+    prnt $ "generalizing with respect to env " ++ render 0 (applySub (exprSubs) env) ++ " which has free variables " ++ show (free (applySub exprSubs env)) ++ " while exprT has free variables " ++ show (free exprT')
+    let genT = generalize (applySub (subs • exprSubs) env) exprT'
     -- create a new environment with that generalized type
         env2 = applySub exprSubs $ tmInsert name genT env
     prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
@@ -219,13 +224,13 @@ initials = M.fromList
     --(">=", bare $ num :=> num :=> num),
     --("==", bare $ num :=> num :=> num),
     --("!=", bare $ num :=> num :=> num),
-    ("(if)", witha $ bool :=> a :=> a :=> a),
+    --("(if)", witha $ bool :=> a :=> a :=> a),
     ("[]", witha $ listT a),
     ("::", witha $ a :=> listT a :=> listT a),
-    ("__matchFail__", witha a),
-    ("__matchError__", witha a),
-    ("__matchOr__", witha $ a :=> a :=> a)
-    --("__listRange__", witha $ a :=> a :=> listT a)
+    --("(fail)", witha a),
+    ("(error)", witha a),
+    ("(or)", witha $ a :=> a :=> a),
+    ("(range)", witha $ a :=> a :=> listT a)
   ]
   where witha = Polytype ["a"]
         a = TVar "a"

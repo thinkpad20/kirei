@@ -1,4 +1,6 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE TypeSynonymInstances, OverlappingInstances #-}
 module Types (Type(..),
               Polytype(..),
               TypeMap(..),
@@ -89,9 +91,14 @@ noSubstitutions = M.empty
 (•) :: Substitutions -> Substitutions -> Substitutions
 s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 
+instance Render Substitutions where
+  render _ subs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+    where pairs = M.toList subs
+          toS (key, val) = "   " ++ key ++ " => " ++ render 0 val
+
 instance Render TypeMap where
   render _ (TM env) = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-    where pairs = M.toList env
+    where pairs = M.toList env ! filter (\(name, _) -> head name /= '(')
           toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
 
 instance Render Polytype where
