@@ -28,24 +28,6 @@ generalize env t = Polytype vars t
 
 type Inferrer = ErrorT String (StateT InferrerState IO)
 
---data Record = NS Type (M.Map Name Record) deriving (Show)
-
---instance Render Record where
---  render n (NS typ subns) = replicate (n*2) ' ' ++ ": " ++ render 0 typ ++ concatMap display pairs
---    where pairs = M.toList subns
---          display (name, ns) = "\n" ++ replicate ((n+1)*2) ' ' ++ name ++ render (n+1) ns
-
-pushNS :: Name -> Inferrer ()
-pushNS name = modify $ \s -> s {nameStack = name : (nameStack s)}
-
-popNS :: Inferrer ()
-popNS = modify $ \s -> s {nameStack = tail (nameStack s)}
-
---insertNS :: [Name] -> Type -> Record -> Record
---insertNS [] typ _ = NS typ mempty
---insertNS (name:names) typ (NS typ' subns) = case M.lookup name subns of
---  Nothing -> NS typ' $ (M.insert name (insertNS names typ subns) subns)
-
 data TypeRecord = Checked Polytype
                 | Declared Type
                 deriving (Show)
@@ -105,8 +87,8 @@ a `unify` b = do
     (t, TVar u) -> u `bind` t
     (TConst n, TConst n') | n == n' -> return noSubstitutions
     (TTuple ts1, TTuple ts2) -> mconcat <$> mapM (uncurry unify) (zip ts1 ts2)
-    (t1, t2) -> throwError $ "types do not unify: " ++ render 0 t1 ++
-                             " !: " ++ render 0 t2
+    (t1, t2) -> throwError' $ "types do not unify: " ++ render 0 t1 ++ " !: " ++
+                   render 0 t2
   where
     bind :: Name -> Type -> Inferrer Substitutions
     bind name typ =
@@ -122,11 +104,16 @@ a `unify` b = do
            -- here is checking if this substitution is meaningful or not, which
            -- has the dual meaning of checking if we're trying to construct the
            -- infinite type.
-           else throwError $ "Error: `" ++ name ++ "` is a free variable " ++
+           else throwError' $ "Error: `" ++ name ++ "` is a free variable " ++
               "with respect to type " ++ render 0 typ
 
+throwError' :: String -> Inferrer a
+throwError' message = do
+  ns <- getNS
+  throwError (message ++ ". When evaluating " ++ ns)
+
 getFull :: Name -> Inferrer Name
-getFull name = get <!> nameStack <!> (name :) <!> reverse <!> intercalate "."
+getFull name = getNS <!> (++ name)
 
 nsLookup :: Name -> Inferrer (Maybe TypeRecord)
 nsLookup name = do
@@ -138,6 +125,14 @@ register name rec = do
   fullname <- getFull name
   modify $ \s -> s { records = M.insert fullname rec (records s) }
 
+pushNS :: Name -> Inferrer ()
+pushNS name = modify $ \s -> s {nameStack = name : (nameStack s)}
+
+popNS :: Inferrer ()
+popNS = modify $ \s -> s {nameStack = tail (nameStack s)}
+
+getNS :: Inferrer Name
+getNS = get <!> nameStack <!> reverse <!> intercalate "."
 
 infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
 infer env@(TM tenv) expr = case expr of
@@ -151,7 +146,7 @@ infer env@(TM tenv) expr = case expr of
   -- symbols are same as variables in this context
   Symbol s -> infer env (Var s)
   Var n -> case M.lookup n tenv of
-    Nothing -> throwError $ "Unknown variable: " ++ n
+    Nothing -> throwError' $ "Unknown variable: " ++ n
     Just sigma -> instantiate sigma >>= noSubs
   TypeName n -> infer env (Var n)
   Lambda pattern body -> do
@@ -182,7 +177,7 @@ infer env@(TM tenv) expr = case expr of
       Just (Declared t) -> return t
       Just (Checked t) ->
         -- don't allow duplicate definitions
-        throwError $ "Redefinition of `" ++ name ++ "`, which had " ++
+        throwError' $ "Redefinition of `" ++ name ++ "`, which had " ++
         "previously been defined in this scope (with type `" ++
         render 0 t ++ "`)"
     --prnt $ "created a new var " ++ show newT ++ " for " ++ name
@@ -218,12 +213,12 @@ infer env@(TM tenv) expr = case expr of
         return (exprSubs • nextSubs, nextT)
   Sig name typ next -> do
     nsLookup name >>= \case
-      Just (Checked t) -> throwError $ "Redeclaration of variable `" ++ name ++ "`"
-      Just (Declared t) -> throwError $ "Redeclaration of variable `" ++ name ++ "`"
+      Just (Checked t) -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
+      Just (Declared t) -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
       Nothing -> register name (Declared typ) >> case next of
         Nothing -> noSubs (tuple [])
         Just expr -> infer env expr
-  otherwise -> throwError $ "Unhandleable expression " ++ prettyExpr expr
+  otherwise -> throwError' $ "Unhandleable expression " ++ prettyExpr expr
   where noSubs t = return (noSubstitutions, t)
         newvar = newTypeVar "a"
         inferPattern env pat = case pat of
