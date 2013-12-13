@@ -46,6 +46,10 @@ instance Render Type where
 
 data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
 
+builtinFuncs = S.fromList ["+", "-", "*", "/", ">", "<", ">=", "<=",
+                           "==", "!=", "::", "[]", "(if)", "(or)",
+                           "(error)", "(fail)", "(range)"]
+
 -- | The Types class describes objects which can contain free type
 -- variables, i.e. those which are not determined by their containers,
 -- and things to which we can apply type substitutions
@@ -98,8 +102,9 @@ instance Render Substitutions where
 
 instance Render TypeMap where
   render _ (TM env) = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-    where pairs = M.toList env ! filter (\(name, _) -> head name /= '(')
+    where pairs = M.toList env ! filter isNotBuiltIn
           toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
+          isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
 
 instance Render Polytype where
   render n (Polytype [] t) = render n t

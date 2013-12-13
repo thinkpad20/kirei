@@ -5,8 +5,7 @@ module AST (Expr(..),
             Matches,
             prettyExpr,
             InString(..),
-            desugar,
-            adtToSigs) where
+            desugar) where
 
 import Common
 import Types
@@ -58,18 +57,19 @@ prettyExpr e = case e of
   Bool b -> show b
   Number n -> if isInt n then show $ floor n else show n
   String s -> show s
-  Symbol op -> op
+  Symbol op -> "(" ++ op ++ ")"
   Var v -> v
   TypeName name -> name
   Underscore -> "_"
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
   Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ handle e2
+  Apply a@(Apply _ _) b -> "(" ++ prettyExpr a ++ " " ++ prettyExpr b ++ ")"
   Apply a b -> prettyExpr a ++ " " ++ prettyExpr b
   Dotted a b -> prettyExpr a ++ "." ++ prettyExpr b
   Comma a b -> prettyExpr a ++ ", " ++ prettyExpr b
   Case e matches -> "case " ++ prettyExpr e ++ " of " ++ sh matches where
-    sh = map s ~> int "|"
+    sh = map s ~> int " | "
     s (ex, exs) = prettyExpr ex ++ " -> " ++ prettyExpr exs
   Tuple es -> "(" ++ int ", " (prettyExpr <$> es) ++ ")"
   Lambda p e -> "λ" ++ prettyExpr p ++ " -> " ++ prettyExpr e
@@ -93,49 +93,58 @@ instance Show InString where
   show (InterShow s e s') = show s ++ " ++ show (" ++ show e ++ ") ++ " ++ show s'
   show (Interpolate s e s') = show s ++ " ++ (" ++ show e ++ ") ++ " ++ show s'
 
-symsToVars :: Expr -> Expr
-symsToVars expr = case expr of
+--symsToVars :: Expr -> Expr
+--symsToVars expr = case expr of
+--  Symbol s -> Var s
+--  If c t f -> If (rec c) (rec t) (rec f)
+--  Let name e Nothing -> Let name (rec e) Nothing
+--  Let name e (Just e') -> Let name (rec e) (Just (rec e'))
+--  Apply a b -> Apply (rec a) (rec b)
+--  Dotted a b -> Dotted (rec a) (rec b)
+--  Comma a b -> Comma (rec a) (rec b)
+--  c@(Case e ms) -> rec $ caseToLambda c
+--  Tuple es -> Tuple $ map rec es
+--  Lambda pat e -> Lambda (rec pat) (rec e)
+--  List (ListLiteral l) -> List (ListLiteral $ map rec l)
+--  List (ListRange a b) -> List (ListRange (rec a) (rec b))
+--  Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ rec e)
+--  Sig name typ (Just next) -> Sig name typ (Just $ rec next)
+--  e -> e
+--  where rec = symsToVars
+
+--desugarList :: Expr -> Expr
+--desugarList expr = case expr of
+--  List lit -> case lit of
+--    ListLiteral es -> foldr cons (TypeName "[]") es where
+--      cons a b = Apply (Apply (TypeName "::") a) b
+--    ListRange start stop -> Apply (Apply (Var "(range)") start) stop
+--  If c t f -> If (rec c) (rec t) (rec f)
+--  Apply a b -> Apply (rec a) (rec b)
+--  Comma a b -> Comma (rec a) (rec b)
+--  Dotted a b -> Dotted (rec a) (rec b)
+--  Case e ms -> Case (rec e) (map (\(a, b) -> (rec a, rec b)) ms)
+--  Lambda pat e -> Lambda (rec pat) (rec e)
+--  Tuple es -> Tuple (map rec es)
+--  Let name e Nothing -> Let name (rec e) Nothing
+--  Let name e1 (Just e2) -> Let name (rec e1) (Just $ rec e2)
+--  ADT n ns cs (Just e) -> adtToSigs (ADT n ns cs (Just $ rec e))
+--  ADT n ns cs Nothing -> adtToSigs expr
+--  Sig n t (Just e) -> Sig n t (Just $ rec e)
+--  _ -> expr
+--  where rec = desugarList
+
+desugar :: Expr -> Expr
+desugar expr = case expr of
   Symbol s -> Var s
-  If c t f -> If (rec c) (rec t) (rec f)
-  Let name e Nothing -> Let name (rec e) Nothing
-  Let name e (Just e') -> Let name (rec e) (Just (rec e'))
-  Apply a b -> Apply (rec a) (rec b)
-  Dotted a b -> Dotted (rec a) (rec b)
-  Comma a b -> Comma (rec a) (rec b)
-  c@(Case e ms) -> rec $ caseToLambda c
-  Tuple es -> Tuple $ map rec es
-  Lambda pat e -> Lambda (rec pat) (rec e)
-  List (ListLiteral l) -> List (ListLiteral $ map rec l)
-  List (ListRange a b) -> List (ListRange (rec a) (rec b))
-  Datatype n ns cs (Just e) -> Datatype n ns cs (Just $ rec e)
-  Sig name typ (Just next) -> Sig name typ (Just $ rec next)
-  e -> e
-  where rec = symsToVars
-
-caseToLambda :: Expr -> Expr
-caseToLambda expr = case expr of
-  Case e ms -> compile e ms
-  where
-    compile _ [] = Var "(error)"
-    compile e ((p,r):ms) =
-      Apply (Apply (Var "(or)") (Apply (Lambda p r) e)) (compile e ms)
-
-{-
-step :: Expr -> Expr -> Expr
-step foo bar = Apply (Apply (Apply (::)) foo) bar
--}
-
-desugarList :: Expr -> Expr
-desugarList expr = case expr of
+  If c t f -> Apply (Apply (Apply (Var "(if)") (rec c)) (rec t)) (rec f)
   List lit -> case lit of
     ListLiteral es -> foldr cons (TypeName "[]") es where
-      cons a b = Apply (Apply (TypeName "::") a) b
-    ListRange start stop -> Apply (Apply (Var "(range)") start) stop
-  If c t f -> If (rec c) (rec t) (rec f)
+      cons a b = Apply (Apply (TypeName "::") (rec a)) (rec b)
+    ListRange start stop -> Apply (Apply (Var "(range)") (rec start)) (rec stop)
   Apply a b -> Apply (rec a) (rec b)
   Comma a b -> Comma (rec a) (rec b)
   Dotted a b -> Dotted (rec a) (rec b)
-  Case e ms -> Case (rec e) (map (\(a, b) -> (rec a, rec b)) ms)
+  Case expr' matches -> caseToLambda (rec expr') matches
   Lambda pat e -> Lambda (rec pat) (rec e)
   Tuple es -> Tuple (map rec es)
   Let name e Nothing -> Let name (rec e) Nothing
@@ -143,19 +152,30 @@ desugarList expr = case expr of
   ADT n ns cs (Just e) -> adtToSigs (ADT n ns cs (Just $ rec e))
   ADT n ns cs Nothing -> adtToSigs expr
   Sig n t (Just e) -> Sig n t (Just $ rec e)
-  _ -> expr
-  where rec = desugarList
+  otherwise -> expr
+  where
+    -- shorthand for recursing
+    rec = desugar
+    -- the goal here is to string together pattern lambdas with (or), with
+    -- the last function returned an `(error)` indicating the match failed.
+    -- see SPJ's book for more info.
+    caseToLambda :: Expr -> [(Expr, Expr)] -> Expr
+    --caseToLambda _ [] = Var "(error)"
+    --caseToLambda e ((pat,res):ms) =
+    --  Apply (Apply (Var "(or)") (Apply (Lambda pat (rec res)) e)) (rec e ms)
+    caseToLambda expr matches = foldr mkLambda (Var "(error)") matches where
+      mkLambda (pattern, result) =
+        Apply (Apply (Var "(or)") (Apply (Lambda pattern (rec result)) expr))
+    -- | adtToSigs makes a bunch of sig statements and creates a new Type which
+    -- should be added to the environment
+    adtToSigs :: Expr -> Expr
+    adtToSigs (ADT name vars constructors next) = makeSigs constructors where
+      newType = foldl' TApply (TConst name) (TVar <$> vars)
+      makeSigs (c:cs) = toSig c $ rest cs
+      toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
+      rest [] = next
+      rest (c:cs) = Just $ toSig c $ rest cs
 
--- | adtToSigs makes a bunch of sig statements and creates a new Type which
--- should be added to the environment
-adtToSigs :: Expr -> Expr
-adtToSigs (ADT name vars constructors next) = makeSigs constructors where
-  newType = foldl' TApply (TConst name) (TVar <$> vars)
-  makeSigs (c:cs) = toSig c $ rest cs
-  toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
-  rest [] = next
-  rest (c:cs) = Just $ toSig c $ rest cs
 
-
-desugar :: Expr -> Expr
-desugar = desugarList ~> symsToVars
+--desugar :: Expr -> Expr
+--desugar = desugarList ~> symsToVars
