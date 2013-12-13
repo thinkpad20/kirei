@@ -223,7 +223,7 @@ infer env@(TM tenv) expr = case expr of
       Nothing -> register name (Declared typ) >> case next of
         Nothing -> noSubs (tuple [])
         Just expr -> infer env expr
-
+  otherwise -> throwError $ "Unhandleable expression " ++ prettyExpr expr
   where noSubs t = return (noSubstitutions, t)
         newvar = newTypeVar "a"
         inferPattern env pat = case pat of
@@ -241,7 +241,7 @@ infer env@(TM tenv) expr = case expr of
             returnT <- newvar
             subs3 <- unify funcT (argT :=> returnT)
             return (subs3 • subs2 • subs1, applySub subs3 returnT)
-          Underscore -> newvar >>= noSubs
+          Placeholder -> newvar >>= noSubs
           Number _ -> noSubs num
           String _ -> noSubs str
           Bool   _ -> noSubs bool
@@ -310,3 +310,11 @@ initials = M.fromList
         b = TVar "b"
         listT = TApply (TConst "[]")
         maybeT = TApply (TConst "Maybe")
+
+adtToSigs :: Name -> [Name] -> [Constructor] -> Maybe Expr -> Expr
+adtToSigs name vars constructors next = makeSigs constructors where
+  newType = foldl' TApply (TConst name) (TVar <$> vars)
+  makeSigs (c:cs) = toSig c $ rest cs
+  toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
+  rest [] = next
+  rest (c:cs) = Just $ toSig c $ rest cs

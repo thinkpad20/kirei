@@ -71,12 +71,12 @@ pBinary = getPrecedences >>= pFrom 0 where
 keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
             "infixl", "infixr", "type", "typeclass", "typedef", "[]",
             "__matchError__", "__matchFail__"]
-keySyms = ["->", "|", "=", ";", "\\"]
+keySyms = ["->", "|", "=", ";", "\\", "?"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
 
-symChars = "><=+-*/^~!%@&$:.#|"
+symChars = "><=+-*/^~!%@&$:.#|?"
 
 symbolChars :: Parser Char
 symbolChars = oneOf symChars
@@ -222,7 +222,8 @@ pPattern = chainr1 pPatternApply next where
     return (\expr -> Apply (Apply (TypeName sym) expr))
 
 pPatternApply = chainl1 pPatternTerm (pure Apply)
-pPatternTerm = choice [pPatParens, pLit, pVar, pConstr] where
+
+pPatternTerm = choice [pPatParens, pLit, pVar, pConstr, pPlaceholder] where
   pLit = Number <$> pDouble <|> String <$> pSimpleString
   pVar = Var <$> pVariable
   pConstr = TypeName <$> pTypeName
@@ -231,11 +232,13 @@ pPatternTerm = choice [pPatParens, pLit, pVar, pConstr] where
     case pats of
       [p] -> return p
       _ -> return $ Tuple pats
+  pPlaceholder = Placeholder <$ keysim "?"
 
 pAnyVariable :: Parser Expr
 pAnyVariable = do
   v <- pVariable
-  if v == "_" then return Underscore else return $ Var v
+  if v /= "_" then return $ Var v
+    else unexpected "Variable `_` can only be used in patterns"
   <|> TypeName <$> pTypeName
 
 pTerm :: Parser Expr
