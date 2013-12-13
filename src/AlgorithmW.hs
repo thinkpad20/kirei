@@ -133,10 +133,10 @@ nsLookup name = do
   fullname <- getFull name
   get <!> records <!> M.lookup fullname
 
-registerChecked :: Name -> Polytype -> Inferrer ()
-registerChecked name typ = do
+register :: Name -> TypeRecord -> Inferrer ()
+register name rec = do
   fullname <- getFull name
-  modify $ \s -> s { records = M.insert name (Checked typ) (records s) }
+  modify $ \s -> s { records = M.insert fullname rec (records s) }
 
 
 infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
@@ -182,8 +182,9 @@ infer env@(TM tenv) expr = case expr of
       Just (Declared t) -> return t
       Just (Checked t) ->
         -- don't allow duplicate definitions
-        throwError $ "`" ++ name ++ "` has already been " ++
-        "declared in this scope (with type `" ++ render 0 t ++ "`)"
+        throwError $ "Redefinition of `" ++ name ++ "`, which had " ++
+        "previously been defined in this scope (with type `" ++
+        render 0 t ++ "`)"
     --prnt $ "created a new var " ++ show newT ++ " for " ++ name
     -- create a new environment with that mapping added
     let env1 = tmInsert name (bare newT) env
@@ -200,7 +201,7 @@ infer env@(TM tenv) expr = case expr of
     -- create a new environment with that generalized type
         env2 = applySub exprSubs $ tmInsert name genT env
     -- make a record of this type
-    registerChecked name genT
+    register name (Checked genT)
     --prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
     --prnt $ "env has " ++ render 0 env
     --prnt $ "env1 has " ++ render 0 env1
@@ -214,6 +215,14 @@ infer env@(TM tenv) expr = case expr of
         (nextSubs, nextT) <- infer env2 next
         --prnt $ "next we found " ++ show (nextSubs, nextT)
         return (exprSubs • nextSubs, nextT)
+  Sig name typ next -> do
+    nsLookup name >>= \case
+      Just (Checked t) -> throwError $ "Redeclaration of variable `" ++ name ++ "`"
+      Just (Declared t) -> throwError $ "Redeclaration of variable `" ++ name ++ "`"
+      Nothing -> register name (Declared typ) >> case next of
+        Nothing -> noSubs (tuple [])
+        Just expr -> infer env expr
+
   where noSubs t = return (noSubstitutions, t)
         newvar = newTypeVar "a"
         inferPattern env pat = case pat of
@@ -234,8 +243,9 @@ infer env@(TM tenv) expr = case expr of
           Number _ -> noSubs num
           String _ -> noSubs str
           Bool   _ -> noSubs bool
-        prnt :: String -> Inferrer ()
-        prnt = lift . lift . putStrLn
+
+prnt :: String -> Inferrer ()
+prnt = lift . lift . putStrLn
 
 typeInference :: M.Map Name Polytype -> Expr -> Inferrer Type
 typeInference env e = uncurry applySub <$> infer (TM env) e
