@@ -190,7 +190,7 @@ infer env@(TM tenv) expr = case expr of
     let env1 = tmInsert name (bare newT) env
     --prnt $ "env1 is " ++ render 0 env1
     -- infer expr with that environment
-    (exprSubs, exprT) <- infer env1 expr'
+    (exprSubs, exprT) <- pushNS name >> infer env1 expr' >>== popNS
     --prnt $ "inferring `" ++ render 0 expr' ++ "` gave us " ++ render 0 exprT ++ ", which after subs is " ++ (render 0 $ applySub exprSubs exprT)
     let exprT' = applySub exprSubs exprT
     subs <- unify newT exprT'
@@ -201,6 +201,7 @@ infer env@(TM tenv) expr = case expr of
     -- create a new environment with that generalized type
         env2 = applySub exprSubs $ tmInsert name genT env
     -- make a record of this type
+
     register name (Checked genT)
     --prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
     --prnt $ "env has " ++ render 0 env
@@ -240,6 +241,7 @@ infer env@(TM tenv) expr = case expr of
             returnT <- newvar
             subs3 <- unify funcT (argT :=> returnT)
             return (subs3 • subs2 • subs1, applySub subs3 returnT)
+          Underscore -> newvar >>= noSubs
           Number _ -> noSubs num
           String _ -> noSubs str
           Bool   _ -> noSubs bool
