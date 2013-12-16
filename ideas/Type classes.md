@@ -132,3 +132,17 @@ union type, if we look at the type classes each supports, if we only allow this
 because it's `::`, if we allow it for all polymorphic functions, or...?
 
 And what about applied types? E.g., `Maybe`? This could be shitty...
+
+
+Let's imagine that we're applying `bar: Applicative a. a Number -> a Number`,
+and `foo : Functor f. f Number`. then imagine we are writing
+
+```
+bar foo
+
+--> unify ((a :~ Applicative) Number -> a Number) ((f :~ Functor) -> b)
+  --> unify ((a :~ Applicative) Number) ((f :~ Functor) Number)
+    --> unify (a :~ Applicative) (f :~ Functor)
+      --> getParents "Functor"
+        --> {"Functor"}
+```

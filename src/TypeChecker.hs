@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances, OverlappingInstances #-}
-module AlgorithmW (Expr(..),
+module TypeChecker (Expr(..),
                    Type(..),
                    infer,
                    test) where
@@ -75,18 +75,116 @@ instantiate s@(Polytype vars t) = do
   let s = M.fromList (zip vars newVars)
   return $ applySub s t
 
+canBeSpecializedTo :: Name -> Type -> Inferrer Bool
+className `canBeSpecializedTo` typ = undefined -- case typ of
+  --TVar _ -> return True
+  --TClass name' | className == name' -> return True
+  --TConst typeName -> do
+  --  instances <- getInstances
+  --  set <- M.findWithDefault S.empty className instances
+  --  return $ typeName `S.member` set
+
+getInstances :: Inferrer (M.Map Name (S.Set Name))
+getInstances = undefined
+
+hierarchy = M.fromList
+  [
+    ("Applicative", S.singleton "Functor")
+  , ("Functor", mempty)
+  , ("Monad", S.singleton "Applicative")
+  , ("Ord", S.singleton "Eq")
+  , ("RealFrac", S.fromList ["Real", "Fractional"])
+  , ("Real", S.fromList ["Num", "Ord"])
+  , ("Num", mempty)
+  ]
+
+{-
+
+we need to get this class's parents, and all of their parents.
+
+[String] parents = getParents(classname)
+for (parent in parents)
+  parents.add(getParents(parent))
+return parents
+-}
+
+instanceStore = M.fromList
+  [
+    ("Num", S.fromList ["Number"])
+  , ("Applicative", S.fromList ["[]"])
+  , ("Eq", S.fromList ["Number", "String", "Bool"])
+  , ("Functor", S.fromList ["[]"])
+  ]
+
+{-
+this is almost good enough for a basic run; the next thing
+though that we need is instances which depend on other
+instances, like
+
+instance Eq a => Eq [a] where
+  a == b = all (==) a b
+
+How to represent that in memory we need to thinking about. Let's kick the can
+down the road a bit on that one... Note though that importantly, it only comes
+into play when we have applied types like (Maybe a) or [b]. This suggests
+perhaps that instead of instanceStore :: Map Name {Name}, we should have
+instanceStore :: Map Name {(Type, {(Name, {Name})}}. Then for example we could
+have
+
+"Eq": {
+  (TConst "String", {})
+, (TConst "Number", {})
+, (TApply "[]" (TVar "a"), {("a", {"Eq"})})
+}
+
+"Functor": {
+  (TApply "[]" (TVar "a"), {})
+}
+
+-}
+
+instances :: Name -> S.Set Name
+instances name = M.findWithDefault mempty name instanceStore
+
+-- | @accepts@ determines if a given type class is either equal to or a parent
+-- of another class. Essentially it consists of that class,
+-- all of its parents, their parents, etc.
+accepts :: Name -> -- class of the parameter, what is accepted by function
+           Type -> -- type of the argument being passed in
+           Bool -- true if argument is an acceptible
+accepts paramClass typ = case typ of
+  TVar _ -> True
+  TConst name -> name `S.member` (instances paramClass)
+  TClass argClass _ ->
+    -- then we need to see if the argument class is the same as the
+    -- parameter class, or if the parameter class is a parent
+    -- of the argument class
+    if argClass == paramClass then True
+    else let argClassParents = M.findWithDefault S.empty argClass hierarchy in
+    any (accepts paramClass) (map (\n -> TClass n "") (S.toList argClassParents))
+  otherwise -> False
+{-
+
+unify ((Functor f) Number) [Number] -> {f => []}
+
+-}
+
 unify :: Type -> Type -> Inferrer Substitutions
 a `unify` b = do
   case (a,b) of
+    (TVar u, t) -> u `bind` t
+    (t, TVar u) -> u `bind` t
+    (TConst n, TConst n') | n == n' -> return noSubstitutions
+    (TTuple ts1, TTuple ts2) -> mconcat <$> mapM (uncurry unify) (zip ts1 ts2)
+    (TClass c n, t) -> c `canBeSpecializedTo` t >>= \case
+      True -> n `bind` b
+      False -> throwError' $ "Type class " ++ c ++ " is not a specialization " ++
+                "of type " ++ render 0 t
     (l :=> r, l' :=> r') -> do
       s1 <- l `unify` l'
       s2 <- applySub s1 r `unify` applySub s1 r'
       return (s1 • s2)
     (l `TApply` r, l' `TApply` r') -> unify (l :=> r) (l' :=> r')
-    (TVar u, t) -> u `bind` t
-    (t, TVar u) -> u `bind` t
-    (TConst n, TConst n') | n == n' -> return noSubstitutions
-    (TTuple ts1, TTuple ts2) -> mconcat <$> mapM (uncurry unify) (zip ts1 ts2)
     (t1, t2) -> throwError' $ "types do not unify: " ++ render 0 t1 ++ " !: " ++
                    render 0 t2
   where

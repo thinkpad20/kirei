@@ -1,0 +1,44 @@
+With type classes it's essential to think about kinds. For example,
+a `Functor` must have a kind `Type -> Type`, and a `Show` instance
+must have kind `Type`.
+
+```
+typeclass Functor f =
+  sig map : (a -> b) -> f a -> f b;
+
+typeclass Applicative f. Functor f =
+  sig pure : a -> f a,
+  sig <*> : f (a -> b) -> f a -> f b;
+
+typeclass Show a =
+  sig show : a -> String;
+
+instance Show a. Show [a] =
+  let show list = "[" ++ intercalate ", " (map show list) ++ "]";
+
+```
+So we can see a few things:
+
+* We can infer the kind of the variable in question by the type signature
+in which it appears -- hopefully, this isn't as complicated a process as
+type inferrence :|
+
+* We place restrictions on the types in the signature. We can think of it
+as saying, "predicated on the fact that f is a functor, f is also an
+applicative only if it implements `pure` and `<*>`"
+
+* When writing an instance, we can also place restrictions on types. One
+thing we can see is that, for example, `Show` requires a `Type`, so it
+wouldn't make sense to give it a `[]`, which is of kind `Type -> Type`.
+This suggests a kind checking and unification scheme.
+
+```
+
+data Expr =
+  // ...
+  | TypeClass [Name] Name Name [Sig]
+
+inferTC :: TypeClassDef -> Inferrer ()
+inferTC (TypeClass parents className varName sigs)
+
+```

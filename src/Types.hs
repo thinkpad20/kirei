@@ -23,6 +23,7 @@ import qualified Data.Set as S
 -------------------------------------------------------
 data Type =
   TVar Name        -- e.g. `a` in `foo : a -> (a, String)` or `List a`
+  | TClass Name Name -- e.g. `(a :~ Show)`
   | TConst Name      -- e.g. `Number`
   | TApply Type Type -- e.g. `Maybe a` or `State [Number] a`
   | TTuple [Type] -- e.g. `(a, Number)`
@@ -59,6 +60,7 @@ class Types a where
 
 instance Types Type where
   free (TVar name) = S.singleton name
+  free (TClass _ name) = S.singleton name
   free (TConst _) = S.empty
   free (TTuple ts) = map free ts ! unionAll
   free (TApply t1 t2) = free t1 `S.union` free t2
@@ -66,6 +68,9 @@ instance Types Type where
 
   applySub s (TVar n) = case M.lookup n s of
     Nothing  -> TVar n
+    Just t   -> t
+  applySub s (TClass c n) = case M.lookup n s of
+    Nothing  -> TClass c n
     Just t   -> t
   applySub s (TApply t1 t2) = applySub s t1 `TApply` applySub s t2
   applySub s (t1 :=> t2) = applySub s t1 :=> applySub s t2
