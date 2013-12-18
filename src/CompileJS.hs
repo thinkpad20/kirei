@@ -34,8 +34,8 @@ boolAndAssigns argName expr = (bools, assignments) where
     Bool b -> (eq' J.Bool b, mempty, k)
     Number n ->(eq' J.Number n, mempty, k)
     String s -> (eq' J.String s, mempty, k)
-    Var v -> if isConstructor v then (eq (aRef 0) (J.String v), mempty, 1)
-      else case argName of
+    TypeName n -> (eq (aRef 0) (J.String n), mempty, 1)
+    Var v -> case argName of
         J.Var v' | v' == v -> (Nothing, mempty, k)
         _ -> (Nothing, single $ J.Assign (J.Var v) argName, k)
     Symbol s -> (eq (aRef 0) (J.String s), mempty, 1)
@@ -50,6 +50,7 @@ boolAndAssigns argName expr = (bools, assignments) where
       (b1, a1, i) = ba k argName a
       (b2, a2, j) = ba i (aRef $ fromIntegral i) b
       in (b1 `and` b2, a1 <> a2, j+1)
+    otherwise -> error $ "Unhandled case: " ++ show expr
     where eq e1 e2 = Just $ J.Binary "===" e1 e2
           eq' f a = eq argName $ f a
           aRef n = J.ArrayReference argName (J.Number n)
@@ -88,6 +89,7 @@ matchesToBlock v matches = case matches of
 makeConstructors :: Name -> [Constructor] -> J.Block
 makeConstructors name cs = mconcat (construct ~> single <$> cs) where
   tName (TVar v) = v
+  tName (TConst "[]") = "list"
   tName (TConst c) = map toLower c
   tName (TTuple ts) = concatMap tName ts
   tName (a :=> b) = tName a ++ "to" ++ tName b
@@ -95,11 +97,14 @@ makeConstructors name cs = mconcat (construct ~> single <$> cs) where
   mkNames ts = zipWith (++) (tName <$> ts) (show <$> [0..])
   construct :: Constructor -> J.Statement
   construct (Constructor name types) = case types of
-    [] -> J.Assign (J.Var name) (J.Array [J.String name])
-    ts -> J.Assign (J.Var name) $ func (mkNames ts) where
+    [] -> J.Assign (mkVName name) (J.Array [J.String name])
+    ts -> J.Assign (mkVName name) $ func (mkNames ts) where
       vars = J.Var <$> mkNames ts
       func [] = J.Array (J.String name : vars)
       func (name:names) = J.Function [name] $ single $ J.Return $ func names
+  mkVName "[]" = J.Var "Empty"
+  mkVName name = J.Var $ if isSymbol name then toString name else name
+
 
 -- Compilation
 -- eToBlk compiles an expression to a block; this means that it will always
@@ -114,7 +119,7 @@ eToBlk expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma e1 e2 -> compile e1 <> eToBlk e2
   Case expr matches -> compileCase 0 expr matches
-  Datatype name tnames cs e' -> case e' of
+  ADT name tnames cs e' -> case e' of
     Nothing -> makeConstructors name cs
     Just e' -> makeConstructors name cs <> eToBlk e'
   e -> single $ J.Return $ eToE e
@@ -131,10 +136,15 @@ eToE expr = case expr of
   Number n -> J.Number n
   String s -> J.String s
   Tuple es -> J.Array (eToE <$> es)
+  TypeName "[]" -> J.Var "Empty"
+  TypeName n -> J.Var $ if isSymbol n then toString n else n
   Var v -> J.Var v
   Symbol s -> J.Var $ toString s
   If c t f -> J.Ternary (eToE c) (eToE t) (eToE f)
   Lambda (Var x) e -> J.Function [x] $ eToBlk e
+  Lambda (Tuple exprs) e -> J.Function (map toArg exprs) $ eToBlk e
+    where toArg (Var x) = x
+          toArg _ = error $ "Can't handle arbitrary exprs in args yet"
   Apply a (Tuple es) -> J.Call (eToE a) (eToE <$> es)
   Apply a b -> J.Call (eToE a) [eToE b]
   Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
@@ -146,6 +156,7 @@ eToE expr = case expr of
     Nothing -> error $ "Unfinished let statement in an expression: " ++ show l
     Just next -> J.Call (J.Function [name] (eToBlk next)) [eToE expr]
   e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
+  otherwise -> error $ "Unhandlable expression: " ++ show expr
 
 -- compile is the top-level compilation function. It's almost identical to
 -- eToBlk except that it does not produce a return on bare expressions or
@@ -160,7 +171,7 @@ compile expr = case expr of
   Apply a b -> call (eToE a) [eToE b]
   Comma l@(Let v e e') e2 -> compile l <> compile e2
   Comma e1 e2 -> compile e1 <> compile e2
-  Datatype name tnames cs e' -> case e' of
+  ADT name tnames cs e' -> case e' of
     Nothing -> makeConstructors name cs
     Just e' -> makeConstructors name cs <> compile e'
   e -> single $ J.Expr $ eToE e
@@ -187,6 +198,7 @@ toString "/" = "div"
 toString "&&" = "and"
 toString "||" = "or"
 toString "^" = "pow"
+toString "::" = "cons"
 toString s = (map fromChar ~> concat) s where
   fromChar '>' = "gt"
   fromChar '<' = "lt"
@@ -201,3 +213,4 @@ toString s = (map fromChar ~> concat) s where
   fromChar '|' = "pipe"
   fromChar '!' = "bang"
   fromChar '@' = "at"
+  fromChar ':' = "col"

@@ -34,7 +34,7 @@ data Expr =
   | Tuple [Expr]
   | Lambda Expr Expr
   | List ListLiteral
-  | Datatype Name [Name] [Constructor] (Maybe Expr)
+  | TypeClass [Name] Name Name Expr (Maybe Expr)
   | ADT Name [Name] [Constructor] (Maybe Expr)
   | Sig Name Type (Maybe Expr)
   deriving (Show, Eq, Ord)
@@ -79,6 +79,10 @@ prettyExpr e = case e of
   Sig name typ e -> "sig " ++ name ++ " : " ++ render 0 typ ++ "; " ++ handle e
   ADT name vars cs next -> "adt " ++ name ++ " " ++ int " " vars ++ " = " ++
     int " | " (map (render 0) cs) ++ "; " ++ handle next
+  TypeClass supers className varName sigs next ->
+    "typeclass " ++ concatMap s supers ++ ". " ++ className ++ " " ++ varName ++
+    " = " ++ prettyExpr sigs ++ handle next
+    where s supName = supName ++ " " ++ varName ++ ", "
   where handle next = case next of Nothing -> ""
                                    Just e -> prettyExpr e
         int = intercalate

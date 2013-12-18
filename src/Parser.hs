@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module Parser (grab) where
+module Parser (grab, isSymbol) where
 
 import Text.Parsec hiding (parse)
 import Data.List (intercalate)
@@ -77,6 +77,9 @@ sstring = lexeme . string
 schar = lexeme . char
 
 symChars = "><=+-*/^~!%@&$:.#|?"
+
+isSymbol :: Name -> Bool
+isSymbol = all (`elem` symChars)
 
 symbolChars :: Parser Char
 symbolChars = oneOf symChars
