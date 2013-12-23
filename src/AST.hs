@@ -61,7 +61,7 @@ prettyExpr e = case e of
   Symbol op -> "(" ++ op ++ ")"
   Var v -> v
   TypeName name -> name
-  Placeholder -> "?"
+  Placeholder -> "?" -- equivalent to Haskell `_`
   If c t f -> "if " ++ prettyExpr c ++ " then " ++
                     prettyExpr t ++ " else " ++ prettyExpr f
   Let n e1 e2 -> "let " ++ n ++ " = " ++ prettyExpr e1 ++ "; " ++ handle e2
@@ -91,6 +91,10 @@ prettyExpr e = case e of
         int = intercalate
         p (klass, var) = klass ++ " " ++ var
 
+-- | @InString@ is short for "interpolated string". It can be either a plain
+-- string, a string with some interpolated expression applying "show" before,
+-- or a string with an interpolated expression as-is (which must be of type
+-- `String`)
 data InString =
   Plain String
   | InterShow InString Expr InString
@@ -123,9 +127,9 @@ desugar expr = case expr of
   where
     -- shorthand for recursing
     rec = desugar
-    -- the goal here is to string together pattern lambdas with (or), with
+    -- the goal here is to string together pattern lambdas with `(or)`, with
     -- the last function returned an `(error)` indicating the match failed.
-    -- see SPJ's book for more info.
+    -- see SPJ's book for more info. `(or)` and `(error)` are both built-ins.
     caseToLambda :: Expr -> [(Expr, Expr)] -> Expr
     caseToLambda expr matches = foldr mkLambda (Var "(error)") matches where
       mkLambda (pattern, result) =

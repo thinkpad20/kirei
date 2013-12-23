@@ -53,16 +53,20 @@ precedences = M.fromList [
 
 pBinary :: Parser Expr
 pBinary = getPrecedences >>= pFrom 0 where
+  -- This will effectively loop from n = 0 through n = 9, each time attempting
+  -- all of the parsers at the level
   pFrom :: Int -> PrecedenceTable -> Parser Expr
   pFrom n precTable | n > 9     = pApply
                     | otherwise = runPrecs precs where
     precs :: [Precedence]
     precs = M.findWithDefault [] n precTable
     runPrecs :: [Precedence] -> Parser Expr
+    -- If we see a right/left/non associative symbol, attempt to parse
+    runPrecs (RightAssoc sym:syms) = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+    runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+    runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+    -- When we run out of parsers to try, recurse on the next level
     runPrecs [] = pFrom (n+1) precTable
-    runPrecs (RightAssoc sym:syms) = pRightAssoc (runPrecs syms) (getSym sym)
-    runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (getSym sym)
-    runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (getSym sym)
 
 keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
             "infixl", "infixr", "type", "typeclass", "typedef", "class"]
@@ -79,12 +83,12 @@ isSymbol = all (`elem` symChars)
 symbolChars :: Parser Char
 symbolChars = oneOf symChars
 
-getSym :: String -> Parser String
-getSym s = try $ do
+pSymbolOf :: String -> Parser String
+pSymbolOf expected = try $ do
   sym <- pSymbol
-  if sym == s
+  if sym == expected
     then return sym
-    else unexpected $ concat ["Expected a '", s, "' but got a '", sym, "'"]
+    else unexpected $ concat ["Expected a '", expected, "' but got a '", sym, "'"]
 
 keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
