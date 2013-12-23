@@ -120,7 +120,7 @@ s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 
 renderMap m = rndr pairs
   where rndr [] = "{}"
-        rndr [pair] = "{" ++ toS pair ++ "}"
+        rndr [(key, val)] = "{" ++ key ++ " : " ++ render 0 val ++ "}"
         rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
         pairs = M.toList m ! filter isNotBuiltIn
         toS (key, val) = "   " ++ key ++ " : " ++ render 0 val

@@ -23,10 +23,24 @@ import Types
 import Defaults
 
 generalize :: TypeMap -> Type -> Polytype
-generalize env t = Polytype vars t
-  where vars = S.toList (free t S.\\ free env)
+generalize env t = Polytype vars' t'
+  where
+    -- grab only the variables that are bound in the scope of this type
+    vars = S.toList (free t S.\\ free env)
+    -- replace them with letters of the alphabet
+    vars' = snd <$> zip vars (pure <$> ['a'..])
+    -- make sure we get any type classes
+    types = map (\v -> TVar (getClasses v t) v) vars
+    -- this function will make a tuple mapping the old name to the new
+    newType (TVar classes name) new = (name, TVar classes [new])
+    -- create the substitutions
+    subs = M.fromList $ zipWith newType types ['a'..]
+    -- apply the substitutions
+    t' = applySub subs t
+
 
 type Inferrer = ErrorT String (StateT InferrerState IO)
+type TypeCheckError = String
 
 data TypeRecord = Checked Polytype
                 | Declared Type
@@ -49,7 +63,7 @@ data InferrerState =
                 , instances :: M.Map Name (S.Set Type)
                 } deriving (Show)
 
-runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
+runInferrer :: Inferrer a -> IO (Either TypeCheckError a, InferrerState)
 runInferrer t = runStateT (runErrorT t) initialState
   where initialState = InferrerState { inferSupply = "a0"
                                       , nameStack = ["(root)"]
@@ -118,7 +132,7 @@ a `unify` b = do
            -- here is checking if this substitution is meaningful or not, which
            -- has the dual meaning of checking if we're trying to construct the
            -- infinite type.
-           else throwError' $ "Error: `" ++ name ++ "` is a free variable " ++
+           else throwError' $ "Type cycle: `" ++ name ++ "` is a free variable " ++
               "with respect to type " ++ render 0 typ
 
 throwError' :: String -> Inferrer a
@@ -127,7 +141,7 @@ throwError' message = do
   throwError (message ++ ". When evaluating " ++ ns)
 
 getFull :: Name -> Inferrer Name
-getFull name = getNS <!> (++ name)
+getFull name = getNS <!> (++ "." ++ name)
 
 nsLookup :: Name -> Inferrer (Maybe TypeRecord)
 nsLookup name = do
@@ -180,7 +194,18 @@ infer env expr = case expr of
     --prnt $ "infered func " ++ render 0 func ++ " : " ++ render 0 funcT
     (argS, argT) <- infer (applySub funcS env) arg
     --prnt $ "infered arg " ++ render 0 arg ++ " : " ++ render 0 argT
-    unifyS <- unify (applySub argS funcT) (argT :=> resultT)
+    unifyS <- do
+      unify (applySub argS funcT) (argT :=> resultT)
+      `catchError`
+      \msg -> do
+        let msg' = concat [ "Type unification error: ", msg
+                          , "\nOccurred while evaluating `"
+                          , render 0 expr, "`\nThe left-hand side of "
+                          , "this expression has type `", render 0 funcT
+                          , "`, while the right-hand side has type `"
+                          , render 0 argT, "`."]
+        throwError msg'
+
     --prnt $ "unify produced subs: " ++ render 0 unifyS
     --prnt $ "the unified type of " ++ render 0 expr ++ " is " ++ render 0 (applySub unifyS resultT)
     return (unifyS • argS • funcS, applySub unifyS resultT)
@@ -213,9 +238,6 @@ infer env expr = case expr of
     -- make a record of this type
     register name (Checked genT)
     --prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
-    --prnt $ "env has " ++ render 0 env
-    --prnt $ "env1 has " ++ render 0 env1
-    --prnt $ "env2 has " ++ render 0 env2
     case next of
       Nothing -> return (exprSubs, tuple [])
       Just next -> do
@@ -267,8 +289,8 @@ test s = do
   case res of
     Left err -> putStrLn $ "error: " ++ err ++ "\n"
     Right t  -> putStrLn $ "Expr: " ++ render 0 expr ++
-                           "\nType: " ++ render 0 t ++ "\n\n" ++
-                           "Env: " ++ render 0 (records env)
+                           "\nType: " ++ render 0 t ++ "\n" ++
+                           "Env:  " ++ render 0 (records env)
 
 -- | @implements@ checks if the list of type classes is implemented by
 -- the type given.
@@ -311,7 +333,7 @@ search classNames className = case classNames of
 -- it, asking if the type is a match for any of the instances.
 isInstance :: Type -> Name -> Inferrer Bool
 typ `isInstance` className = do
-  prnt $ "Seeing if " ++ render 0 typ ++ " is an instance of " ++ className
+  --prnt $ "Seeing if " ++ render 0 typ ++ " is an instance of " ++ className
   get <!> instances <!> M.lookup className >>= \case
     Nothing -> error $ "Invalid type class " ++ show className
     Just types -> any (== True) <$> mapM (isMatch typ) (S.toList types)
@@ -332,9 +354,3 @@ tester `isMatch` stored = do
     (TTuple ts, TTuple ts') -> and <$> zipWithM isMatch ts ts'
     (a :=> b, c :=> d) -> isMatch (TApply a b) (TApply c d)
     (a, b) -> return False
-
-
-toGenericName :: Polytype -> Polytype
-toGenericName p@(Polytype vars t) =
-  let subs = M.fromList $ zip vars ['a'..] in
-  applySub subs p

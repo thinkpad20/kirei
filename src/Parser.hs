@@ -2,14 +2,10 @@
 module Parser (grab, isSymbol) where
 
 import Text.Parsec hiding (parse)
-import Data.List (intercalate)
-import Control.Applicative hiding ((<|>), many, optional)
-import Data.Monoid
-import Debug.Trace
+import Control.Applicative hiding ((<|>), many)
 import Common
 import AST
 import Types
-import Data.Char (isLower)
 import qualified Data.Map as M
 import Prelude hiding (foldr)
 
@@ -42,7 +38,7 @@ skip = spaces *> many (choice [try blockComment,
 
 precedences :: PrecedenceTable
 precedences = M.fromList [
-                (0, [l "!", r "$"]), -- lowest precedence
+                (0, [l "|>", r "<|"]), -- lowest precedence
                 (1, [l ">>", l ">>="]),
                 (2, [r "||"]),
                 (3, [r "&&"]),
@@ -69,9 +65,8 @@ pBinary = getPrecedences >>= pFrom 0 where
     runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (getSym sym)
 
 keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
-            "infixl", "infixr", "type", "typeclass", "typedef", "[]",
-            "__matchError__", "__matchFail__"]
-keySyms = ["->", "|", "=", ";", "\\", "?", ":~", ":"]
+            "infixl", "infixr", "type", "typeclass", "typedef", "class"]
+keySyms = ["->", "|", "=", ";", "\\", "?", ":~", ":", "//", "/*", "*/"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
