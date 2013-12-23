@@ -1,0 +1,10 @@
+Idea: accessor methods on multi-constructor datatypes
+
+type Foo =
+  Bar (blob: Blib) (bloob: Blip)
+| Fligglety (flaggle: Gribble) (snaggle: Blabble)
+;
+
+myFoo = Bar someBlib someBlip
+
+print "Here's a Bar #{blob myFoo}"

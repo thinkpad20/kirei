@@ -1,0 +1,68 @@
+Generalizing and instantiating with type classes
+
+first of all, as of right now type classes can only be applied to type variables,
+not to others. Then the question is, is that information stored at the polytype
+level or the type level?
+
+If we have this type:
+
+map : Functor f. (a -> b) -> f a -> f b
+
+The generalized type of this is
+
+map : All a b, Functor f. (a -> b) -> f a -> f b.
+
+Now when we instantiate the type, we're supposed to give it new *bound*
+variables.
+
+instantiate :: Polytype -> Inferrer Type
+instantiate s@(Polytype vars t) = do
+  newVars <- mapM (\_ -> newTypeVar "a") vars
+  let s = M.fromList (zip vars newVars)
+  return $ applySub s t
+
+Well we should still do that, but we need to propagate the information
+that there is a restriction:
+
+instantiate :: Polytype -> Inferrer Type
+instantiate s@(Polytype vars t) = do
+  newVars <- mapM mkNew vars
+  let s = M.fromList (zip vars newVars)
+  return $ applySub s t
+  where mkNew (Nothing, _) = newTypeVar "a"
+        mkNew (Just Class, _) = TClass
+
+... ok so it seems worth trying storing this at the type level,
+not the scheme level. After all the variables in the scheme are
+still free.
+
+On the other hand, the way they're written in Haskell, it seems
+that they are stored at the scheme level... but that could be
+sugar.
+
+
+
+let's say `foo : Applicative f. f a -> f b`, and `bar : Functor g. g c`.
+Then let's apply `foo bar`.
+
+We have class hierarchy
+
+```
+Functor
+Applicative derives from Functor
+```
+
+we'd see
+
+```
+unify ((f :~ Applicative) a :=> f b) ((g :~ Functor) c :=> d)
+  unify ((f :~ Applicative) a) ((g :~ Functor) c) >> unify ((f :~ Applicative) b) d
+    unify (f :~ Applicative) (g :~ Functor)
+      "Applicative" `isCompatible` "Functor"
+        parents "Functor" ==> {}, does not include Applicative
+      -> Applicative is not superset of Functor, error
+```
+
+So we need a function to find all compatible type classes of a type class; this
+set consists of the type class itself, all of its parents, all of their parents,
+etc. Then we just check for membership in that set.

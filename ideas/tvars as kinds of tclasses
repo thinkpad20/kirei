@@ -1,0 +1,50 @@
+we say map takes (a->b) -> [a] -> [b] for ANY a and b.
+
+Well, the difference with something like fmap is it takes
+
+(a -> b) -> f a -> f b
+
+for ANY a and b, but only for FUNCTOR fs.
+
+This would be represented at the type level as
+
+TClass "Functor" "f"
+
+this means that "f" is still for all intents a bound variable,
+and should be generalized as such -- with its class restriction
+still attached. Therefore the variables free in type of fmap
+do include its type class-restricted variables.
+
+Therefore also with instantiation, the instantiation of `Functor f`
+is just `Functor ∑` where ∑ is a new type variable.
+
+instantiate (Scheme [a, b, f] ((a :=> b) :=> (f :~ Functor) a :=> f b))
+=
+(x :=> y) :=> π x :=> π y
+
+We can see from this that the difference is when we apply a substitution:
+
+-- 1 restrict the type inside of the class
+-- ex: Functor f => Functor g
+applySub {t => t'} (TClass cname t) = TClass cname t'
+
+
+-- 2 restrict the class name to a subclass
+-- ex: Applicative f => Functor f
+applySub {cname => cname'} (TClass cname t) = TClass cname' t
+
+-- 3 restrict the class name and the variable name
+-- ex: Applicative f => Functor g
+applySub {cname t => cname' t'} (TClass cname t) = TClass cname' t'
+
+-- 4 replace type class restriction with actual type
+-- Applicative f => []
+applySub {cname t => t'} (TClass cname t) = t'
+
+This means that when we're doing a substitution, we need to be able to keep
+track of two names, not just one. Which suggests:
+
+type Substitutions = M.Map (String, String) Type
+
+this in and of itself suggests that an unrestricted `TVar foo` could be represented
+simply by a `TClass "" foo`. So let's try that out...

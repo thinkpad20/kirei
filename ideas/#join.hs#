@@ -1,0 +1,11 @@
+import Data.Monoid
+
+class Monoid m => 
+
+joinBy sep m =
+  if m == mempty then m
+  else if m == 
+  case list of
+  [] -> []
+  [s] -> s
+  s:ss -> s <> sep <> joinBy sep ss

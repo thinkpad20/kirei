@@ -3,7 +3,7 @@ module Common ((~>), (!), (<$>), (<!>),
                pure, (<*>), (<$), (*>),
                (<*), intercalate, Name,
                foldl', foldr, isInt, unionAll,
-               Render(..), mconcat, (<>)) where
+               Render(..), (<>), (>>==), Monoid(..)) where
 
 import Prelude hiding (foldl', foldr)
 import Data.Foldable (foldl', foldr)
@@ -40,3 +40,5 @@ isIntTo x n = (round $ 10^(fromIntegral n)*(x-(fromIntegral $ round x)))==0
 isInt x = isIntTo x 10
 
 unionAll = foldl' S.union S.empty
+
+monad >>== function = monad >>= \a -> function >> return a
