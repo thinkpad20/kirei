@@ -3,7 +3,7 @@ module Common ((~>), (!), (<$>), (<!>),
                pure, (<*>), (<$), (*>),
                (<*), intercalate, Name,
                foldl', foldr, isInt, unionAll,
-               Render(..), mconcat, (<>), (>>==)) where
+               Render(..), (<>), (>>==), Monoid(..)) where
 
 import Prelude hiding (foldl', foldr)
 import Data.Foldable (foldl', foldr)

@@ -35,9 +35,13 @@ data TypeRecord = Checked Polytype
 type Record = M.Map Name TypeRecord
 
 instance Render Record where
-  render _ record = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-    where pairs = M.toList record
-          toS (key, val) = "   " ++ key ++ " => " ++ render 0 val
+  render _ rec = rndr pairs
+    where rndr [] = "{}"
+          rndr [pair] = "{" ++ toS pair ++ "}"
+          rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+          pairs = M.toList rec ! filter isNotBuiltIn
+          toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
+          isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
 
 instance Render TypeRecord where
   render _ (Checked ptype) = render 0 ptype
@@ -46,140 +50,55 @@ instance Render TypeRecord where
 data InferrerState =
   InferrerState { inferSupply :: Name
                 , nameStack   :: [Name]
-                , records   :: Record } deriving (Show)
+                , records   :: Record
+                , typeClasses :: M.Map Name TypeClass
+                , instances :: M.Map Name (S.Set Type)
+                } deriving (Show)
 
 runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
 runInferrer t = runStateT (runErrorT t) initialState
   where initialState = InferrerState { inferSupply = "a"
                                       , nameStack = ["(root)"]
-                                      , records = mempty }
+                                      , records = mempty
+                                      , typeClasses = typeClasses'
+                                      , instances = instanceStore }
 
 -- | Get a fresh new type variable to use
-newTypeVar :: String -> Inferrer Type
-newTypeVar prefix = do
+newTypeVar :: [Name] -> Inferrer Type
+newTypeVar classes = do
   -- get the current state
-  s <- get
+  var <- inferSupply <$> get
   -- increment the inferSupply
-  modify $ \s -> s { inferSupply = next (inferSupply s) }
+  modify $ \s -> s { inferSupply = next var }
   -- wrap it in a type variable and return it
-  return $ TVar $ inferSupply s
+  return $ TVar classes var
   where
     next name = let (c:cs) = reverse name in
       if c < 'z' then reverse $ succ c : cs else 'a' : (map (\_ -> 'a') name)
 
 instantiate :: Polytype -> Inferrer Type
 instantiate s@(Polytype vars t) = do
-  newVars <- mapM (\_ -> newTypeVar "a") vars
+  newVars <- mapM (\var -> getClasses var t ! newTypeVar) vars
   -- make a substitution mapping all of the variables in the scheme
   -- to new variables we just generated
   let s = M.fromList (zip vars newVars)
-  return $ applySub s t
-
-canBeSpecializedTo :: Name -> Type -> Inferrer Bool
-className `canBeSpecializedTo` typ = undefined -- case typ of
-  --TVar _ -> return True
-  --TClass name' | className == name' -> return True
-  --TConst typeName -> do
-  --  instances <- getInstances
-  --  set <- M.findWithDefault S.empty className instances
-  --  return $ typeName `S.member` set
-
-getInstances :: Inferrer (M.Map Name (S.Set Name))
-getInstances = undefined
-
-hierarchy = M.fromList
-  [
-    ("Applicative", S.singleton "Functor")
-  , ("Functor", mempty)
-  , ("Monad", S.singleton "Applicative")
-  , ("Ord", S.singleton "Eq")
-  , ("RealFrac", S.fromList ["Real", "Fractional"])
-  , ("Real", S.fromList ["Num", "Ord"])
-  , ("Num", mempty)
-  ]
-
-{-
-
-we need to get this class's parents, and all of their parents.
-
-[String] parents = getParents(classname)
-for (parent in parents)
-  parents.add(getParents(parent))
-return parents
--}
-
-instanceStore = M.fromList
-  [
-    ("Num", S.fromList ["Number"])
-  , ("Applicative", S.fromList ["[]"])
-  , ("Eq", S.fromList ["Number", "String", "Bool"])
-  , ("Functor", S.fromList ["[]"])
-  ]
-
-{-
-this is almost good enough for a basic run; the next thing
-though that we need is instances which depend on other
-instances, like
-
-instance Eq a => Eq [a] where
-  a == b = all (==) a b
-
-How to represent that in memory we need to thinking about. Let's kick the can
-down the road a bit on that one... Note though that importantly, it only comes
-into play when we have applied types like (Maybe a) or [b]. This suggests
-perhaps that instead of instanceStore :: Map Name {Name}, we should have
-instanceStore :: Map Name {(Type, {(Name, {Name})}}. Then for example we could
-have
-
-"Eq": {
-  (TConst "String", {})
-, (TConst "Number", {})
-, (TApply "[]" (TVar "a"), {("a", {"Eq"})})
-}
-
-"Functor": {
-  (TApply "[]" (TVar "a"), {})
-}
-
--}
-
-instances :: Name -> S.Set Name
-instances name = M.findWithDefault mempty name instanceStore
-
--- | @accepts@ determines if a given type class is either equal to or a parent
--- of another class. Essentially it consists of that class,
--- all of its parents, their parents, etc.
-accepts :: Name -> -- class of the parameter, what is accepted by function
-           Type -> -- type of the argument being passed in
-           Bool -- true if argument is an acceptible
-accepts paramClass typ = case typ of
-  TVar _ -> True
-  TConst name -> name `S.member` (instances paramClass)
-  TClass argClass _ ->
-    -- then we need to see if the argument class is the same as the
-    -- parameter class, or if the parameter class is a parent
-    -- of the argument class
-    if argClass == paramClass then True
-    else let argClassParents = M.findWithDefault S.empty argClass hierarchy in
-    any (accepts paramClass) (map (\n -> TClass n "") (S.toList argClassParents))
-  otherwise -> False
-{-
-
-unify ((Functor f) Number) [Number] -> {f => []}
-
--}
+      res = applySub s t
+  return res
 
 unify :: Type -> Type -> Inferrer Substitutions
 a `unify` b = do
+  --prnt $ "Unify called with " ++ render 0 a ++ ", " ++ render 0 b
   case (a,b) of
-    (TVar u, t) -> u `bind` t
-    (t, TVar u) -> u `bind` t
-    (TConst n, TConst n') | n == n' -> return noSubstitutions
+    (TVar [] u, t) -> u `bind` t
+    (t, TVar [] u) -> u `bind` t
+    (TVar classNames u, t) -> do
+      res <- t `implements` classNames
+      case res of
+        True -> u `bind` t
+        False -> throwError $ "Type class unification error: `" ++ render 0 t ++
+                  "` does not implement type classes " ++ show classNames
+    (TConst n, TConst n') | n == n' -> return mempty
     (TTuple ts1, TTuple ts2) -> mconcat <$> mapM (uncurry unify) (zip ts1 ts2)
-    (TClass c n, t) -> c `canBeSpecializedTo` t >>= \case
-      True -> n `bind` b
-      False -> throwError' $ "Type class " ++ c ++ " is not a specialization " ++
-                "of type " ++ render 0 t
     (l :=> r, l' :=> r') -> do
       s1 <- l `unify` l'
       s2 <- applySub s1 r `unify` applySub s1 r'
@@ -190,8 +109,8 @@ a `unify` b = do
   where
     bind :: Name -> Type -> Inferrer Substitutions
     bind name typ =
-      if typ == TVar name
-      then return noSubstitutions
+      if typ == TVar [] name
+      then return mempty
       else if not $ name `S.member` free typ
            then return (M.singleton name typ)
            -- what does this error mean? well let's say we're binding `a` to
@@ -233,7 +152,7 @@ getNS :: Inferrer Name
 getNS = get <!> nameStack <!> reverse <!> intercalate "."
 
 infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
-infer env@(TM tenv) expr = case expr of
+infer env expr = case expr of
   String _ -> noSubs str
   Number _ -> noSubs num
   Bool _ -> noSubs bool
@@ -243,7 +162,7 @@ infer env@(TM tenv) expr = case expr of
     return (subs', TTuple $ map snd subsAndTypes)
   -- symbols are same as variables in this context
   Symbol s -> infer env (Var s)
-  Var n -> case M.lookup n tenv of
+  Var n -> case M.lookup n env of
     Nothing -> throwError' $ "Unknown variable: " ++ n
     Just sigma -> instantiate sigma >>= noSubs
   TypeName n -> infer env (Var n)
@@ -251,7 +170,7 @@ infer env@(TM tenv) expr = case expr of
     --prnt $ "env was " ++ show env
     (vars, paramT) <- inferPattern env pattern
     --prnt $ "inferring pattern " ++ render 0 pattern ++ " gave vars " ++ show vars
-    let env' = tmUnion (TM $ (bare <$> vars)) env
+    let env' = tmUnion (bare <$> vars) env
     --prnt $ "env is now " ++ show env'
     (subs, bodyT) <- infer env' body
     --prnt $ "LAMBDA inferred the body type of " ++ render 0 body ++ " to be " ++ render 0 bodyT
@@ -263,7 +182,7 @@ infer env@(TM tenv) expr = case expr of
     (funcS, funcT) <- infer env func
     --prnt $ "infered func " ++ render 0 func ++ " : " ++ render 0 funcT
     (argS, argT) <- infer (applySub funcS env) arg
-    --prnt $ "infered func " ++ render 0 arg ++ " : " ++ render 0 argT
+    --prnt $ "infered arg " ++ render 0 arg ++ " : " ++ render 0 argT
     unifyS <- unify (applySub argS funcT) (argT :=> resultT)
     --prnt $ "the unified type of " ++ render 0 expr ++ " is " ++ show (applySub unifyS resultT)
     return (unifyS • argS • funcS, applySub unifyS resultT)
@@ -317,8 +236,8 @@ infer env@(TM tenv) expr = case expr of
         Nothing -> noSubs (tuple [])
         Just expr -> infer env expr
   otherwise -> throwError' $ "Unhandleable expression " ++ prettyExpr expr
-  where noSubs t = return (noSubstitutions, t)
-        newvar = newTypeVar "a"
+  where noSubs t = return (mempty, t)
+        newvar = newTypeVar []
         inferPattern env pat = case pat of
           Var v -> do
             newT <- newvar
@@ -343,7 +262,7 @@ prnt :: String -> Inferrer ()
 prnt = lift . lift . putStrLn
 
 typeInference :: M.Map Name Polytype -> Expr -> Inferrer Type
-typeInference env e = uncurry applySub <$> infer (TM env) e
+typeInference env e = uncurry applySub <$> infer env e
 
 test s = do
   expr <- grab s
@@ -380,34 +299,165 @@ main = do
 
 initials = M.fromList
   [
-    ("+", bare $ num :=> num :=> num),
-    ("-", bare $ num :=> num :=> num),
-    ("*", bare $ num :=> num :=> num),
-    ("/", bare $ num :=> num :=> num),
-    ("<", bare $ num :=> num :=> bool),
-    (">", bare $ num :=> num :=> bool),
-    ("<=", bare $ num :=> num :=> bool),
-    (">=", bare $ num :=> num :=> bool),
-    ("==", bare $ num :=> num :=> bool),
-    ("!=", bare $ num :=> num :=> bool),
-    ("(if)", witha $ bool :=> a :=> a :=> a),
-    ("[]", witha $ listT a),
-    ("::", witha $ a :=> listT a :=> listT a),
-    ("(fail)", witha a),
-    ("(error)", witha a),
-    ("(or)", witha $ a :=> a :=> a),
-    ("(range)", witha $ a :=> a :=> listT a)
+    ("+", witha $ numa :=> numa :=> numa)
+  , ("-", witha $ numa :=> numa :=> numa)
+  , ("*", witha $ numa :=> numa :=> numa)
+  , ("/", witha $ numa :=> numa :=> numa)
+  , ("<", witha $ compa :=> compa :=> bool)
+  , (">", witha $ compa :=> compa :=> bool)
+  , ("<=", witha $ compa :=> compa :=> bool)
+  , (">=", witha $ compa :=> compa :=> bool)
+  , ("==", witha $ eqa :=> eqa :=> bool)
+  , ("!=", witha $ eqa :=> eqa :=> bool)
+  , ("(if)", witha $ bool :=> a :=> a :=> a)
+  , ("[]", witha $ listT a)
+  , ("::", witha $ a :=> listT a :=> listT a)
+  , ("(fail)", witha a)
+  , ("(error)", witha a)
+  , ("(or)", witha $ a :=> a :=> a)
+  , ("(range)", witha $ a :=> a :=> listT a)
+  , ("show", witha $ a' ["Show"] :=> str)
+  , ("map", withab $ (a :=> b) :=> f a :=> f b)
   ]
   where witha = Polytype ["a"]
-        a = TVar "a"
-        b = TVar "b"
+        withab = Polytype ["a", "b"]
+        a = TVar [] "a"
+        b = TVar [] "b"
+        a' classes = TVar classes "a"
+        f = TApply (TVar ["Functor"] "f")
         listT = TApply (TConst "[]")
         maybeT = TApply (TConst "Maybe")
+        numa = TVar ["Num"] "a"
+        compa = TVar ["Comp"] "a"
+        eqa = TVar ["Eq"] "a"
 
 adtToSigs :: Name -> [Name] -> [Constructor] -> Maybe Expr -> Expr
 adtToSigs name vars constructors next = makeSigs constructors where
-  newType = foldl' TApply (TConst name) (TVar <$> vars)
+  newType = foldl' TApply (TConst name) (TVar [] <$> vars)
   makeSigs (c:cs) = toSig c $ rest cs
   toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
   rest [] = next
   rest (c:cs) = Just $ toSig c $ rest cs
+
+kinds :: M.Map Name Kind
+kinds = M.fromList
+  [
+    ("[]", type_ :=> type_)
+  , ("Number", type_)
+  , ("String", type_)
+  , ("Bool", type_)
+  ]
+
+typeClasses' :: M.Map Name TypeClass
+typeClasses' = M.fromList
+  [
+    ("Applicative", TC (type_ :=> type_) "g" [pure_, apply_] ["Functor"])
+  , ("Functor", TC (type_ :=> type_) "f" [map_] [])
+  , ("Monad", TC (type_ :=> type_) "m" [return_, bind_] ["Applicative"])
+  , ("Show", TC type_ "a" [show_] [])
+  , ("Eq", TC type_ "a" [eq_] [])
+  , ("Ord", TC type_ "a" [succ_] ["Eq"])
+  ]
+  where a = TVar [] "a"
+        a' name = TVar [name] "a"
+        b = TVar [] "b"
+        f = TApply (TVar ["Functor"] "f")
+        g = TApply (TVar ["Applicative"] "g")
+        m = TApply (TVar ["Monad"] "m")
+        pure_ = TSig "pure" (a :=> g a)
+        apply_ = TSig "<*>" (g (a :=> b) :=> g a :=> g b)
+        map_ = TSig "map" ((a :=> b) :=> f a :=> f b)
+        eq_ = TSig "==" (a' "Eq" :=> a' "Eq" :=> bool)
+        succ_ = TSig "succ" (a' "Ord" :=> a' "Ord")
+        return_ = TSig "return" (a :=> m a)
+        bind_ = TSig ">>=" (m a :=> (a :=> m b) :=> m b)
+        show_ = TSig "show" (a' "Show" :=> str)
+
+-- | @implements@ checks if the list of type classes is implemented by
+-- the type given.
+implements :: Type -> [Name] -> Inferrer Bool
+typ `implements` classNames = do
+  prnt $ "Seeing if " ++ render 0 typ ++ " implements " ++ show classNames
+  results <- mapM check classNames
+  return $ all (== True) results where
+  check className = case typ of
+    -- an unrestricted type variable will always match with any type
+    TVar [] _ -> return True
+    TVar classNames' _ -> search classNames' className
+    otherwise -> do
+      prnt $ "here we are"
+      res <- typ `isInstance` className
+      prnt $ "Result we got was " ++ show res
+      return res
+
+-- @search@ recurses through the list of names until it finds itself or
+-- runs out of names to look through
+search :: [Name] -> Name -> Inferrer Bool
+search classNames className = case classNames of
+    -- if we've run out of names, then we didn't find ourselves
+    [] -> return False
+    -- if this class is an element of classes', then we're golden
+    _ | className `elem` classNames -> return True
+    -- otherwise, we need to get all of their parents
+      | otherwise -> do
+        parents <- concat <$> mapM getParents classNames
+        search parents className
+  where
+    -- @getParents@ is a wrapper for looking up the class and calling inherits
+    getParents :: Name -> Inferrer [Name]
+    getParents className = get <!> typeClasses <!> M.lookup className >>= \case
+      Nothing -> error $ "Wtf " ++ className ++ " wasn't found"
+      Just tclass -> return $ inherits tclass
+
+-- | @isInstance@ checks if a type is an instance of a type class. It looks
+-- the set of instances up in the @instances@ dictionary and iterates through
+-- it, asking if the type is a match for any of the instances.
+isInstance :: Type -> Name -> Inferrer Bool
+typ `isInstance` className = do
+  prnt $ "Seeing if " ++ render 0 typ ++ " is an instance of " ++ className
+  get <!> instances <!> M.lookup className >>= \case
+    Nothing -> error $ "Invalid type class " ++ show className
+    Just types -> any (== True) <$> mapM (isMatch typ) (S.toList types)
+
+instanceStore = M.fromList
+  [
+    ("Num",         S.fromList [num])
+  , ("Applicative", S.fromList [list])
+  , ("Eq",          S.fromList [ num
+                               , str
+                               , bool
+                               , listOf (a ["Eq"])
+                               ])
+  , ("Functor",     S.fromList [list])
+  , ("Show",        S.fromList [ num
+                               , str
+                               , bool
+                               , listOf (a ["Show"])
+                               ])
+  , ("Monoid",      S.fromList [ num
+                               , listOf (a [])])
+  , ("Comp",       S.fromList [ num
+                               , str
+                               , listOf (a ["Comp"])])
+  ]
+  where list = TConst "[]"
+        listOf = TApply list
+        a classes = TVar classes "a"
+
+isMatch :: Type -> Type -> Inferrer Bool
+tester `isMatch` stored = do
+  prnt $ "Seeing if " ++ render 0 tester ++ " is a match for " ++ render 0 stored
+  case (tester, stored) of
+    -- if what we have stored is a variable, we can just use @implements@
+    (tester, TVar classNames _) -> tester `implements` classNames
+    (TConst n, TConst n') -> do
+      when (n == n') (prnt $ "w00t!")
+      return $ n == n'
+    (TApply a b , TApply c d) -> do
+      res1 <- (a `isMatch` c)
+      res2 <- (b `isMatch` d)
+      return $ res1 == res2
+    (TTuple ts, TTuple ts') -> and <$> zipWithM isMatch ts ts'
+    (a :=> b, c :=> d) -> isMatch (TApply a b) (TApply c d)
+    (a, b) -> return False
+
