@@ -189,11 +189,11 @@ let fib n = if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
 let fib' = \n -> if n < 1 then 0 else if n < 2 then 1 else fib (n - 1) + fib (n - 2);
 ```
 
-Single-line comments start with `#`; there are no block comments yet.
+Kirei's comments are the same as C-family languages:
 
 ```
-#here's a comment
-here is some code;
+// here's a line comment
+here is /* a block comment inside */ some code;
 ```
 
 Pattern matching works via Haskell-style case expressions:
@@ -207,7 +207,7 @@ let fib n = case n of
 
 You can declare algebraic data types with a Haskell-esque syntax:
 
-```
+```haskell
 type Bool = False | True;
 type [] a = [] | a :: [a];
 
@@ -219,31 +219,69 @@ let reverse list =
 
 let foo = [1..6];
 let bar = [5,4,3,2,1];
-assert foo == reverse bar;
+assert (foo == reverse bar); // true
 ```
 
 You can optionally declare a type signature for a function using `sig`:
 
 ```haskell
-sig map : (a -> b) -> [a] -> [b];
-let map f list = case list of
+sig lmap : (a -> b) -> [a] -> [b];
+let lmap f list = case list of
   [] -> []
-| a :: as -> f a :: map f as;
+| a :: as -> f a :: lmap f as;
 ```
 
 This is not generally necessary, however, since all types are inferred with a Hindley-Milner style type inferrence system.
 
-We have two forms of string interpolation. Using `#{ }` inside of a string will call `show` on whatever is inside the curly braces, while using `#[ ]` will put the result in verbatim (it must be a string).
+We have two forms of string interpolation. Using `#{ }` inside of a string will call `show` on whatever is inside the curly braces, while using `#[ ]` will put the result in verbatim (it must be a string to type check).
 
 ```haskell
 let name = "Allen";
 let age = 28;
 let intro1 = "Hi, my name is #[name] and I'm #{age} years old.";
 let intro2 = "Hi, my name is " ++ name ++ " and I'm " ++ show age ++ " years old.";
-assert intro1 == intro2;
+assert (intro1 == intro2);
 ```
 
-And that's about it. Of course, future syntax will be introduced for more syntactic sugar (like `where` clauses), typedefs, type classes, and a bit more. But that's close to everything.
+The fixity of binary operators can be specified in the code; this will affect how they are parsed.
+
+```haskell
+let x |> f = f x;
+infixl 0 |>;
+[1..6] |> map (+2) |> show |> \s -> println s $IO; // prints [3,4,5,6,7]
+```
+
+Kirei has type classes! These are still being worked out, but here's the syntax.
+
+```
+// Show are things which can be converted to strings
+typeclass Show a = 
+  sig show : a -> String;
+;
+
+// Functors are things which can be mapped over
+typeclass Functor f = 
+  sig map : (a -> b) -> f a -> f b;
+;
+
+// Applicatives support functions inside a computational context
+typeclass Applicative (f :~ Functor) =
+  sig pure : a -> f a;
+  sig <*> : f (a -> b) -> f a -> f b;
+;
+
+instance Functor [] =
+  let map = lmap;
+;
+
+instance Show [a :~ Show] =
+  let show list = "[" ++ joinBy "," (map show list) ++ "]";
+;
+```
+
+So it's pretty much like Haskell except that we use `=` instead of `where`, type class restrictions are given by `:~` instead of prepending the restriction with a `=>`, and we have `let`s and `sig`s as per normal Kirei.
+
+And that's about it. Of course, future syntax will be introduced for more syntactic sugar (like `where` clauses), typedefs, and a bit more. But that's close to everything.
 
 ### Current status and usage
 
