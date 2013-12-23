@@ -88,7 +88,7 @@ matchesToBlock v matches = case matches of
 
 makeConstructors :: Name -> [Constructor] -> J.Block
 makeConstructors name cs = mconcat (construct ~> single <$> cs) where
-  tName (TVar v) = v
+  tName (TVar _ v) = v
   tName (TConst "[]") = "list"
   tName (TConst c) = map toLower c
   tName (TTuple ts) = concatMap tName ts

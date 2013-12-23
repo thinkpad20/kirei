@@ -331,7 +331,7 @@ pTApply = chainl1 pTTerm (pure TApply)
 
 pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
   pTParens = between (schar '(') (schar ')') pType
-  pTVar = TVar <$> pTypeVariable
+  pTVar = TVar [] <$> pTypeVariable
   pTConst = TConst <$> pTypeName
   pListType = TApply (TConst "[]") <$ keysim "[" <*> pTTerm <* keysim "]"
 
