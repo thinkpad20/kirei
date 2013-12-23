@@ -34,9 +34,10 @@ data Expr =
   | Tuple [Expr]
   | Lambda Expr Expr
   | List ListLiteral
-  | TypeClass [Name] Name Name Expr (Maybe Expr)
   | ADT Name [Name] [Constructor] (Maybe Expr)
   | Sig Name Type (Maybe Expr)
+  | TypeClass Name [Type] [Expr] (Maybe Expr)
+  | Instance Name Type [Expr] (Maybe Expr)
   deriving (Show, Eq, Ord)
 
 data ListLiteral =
@@ -79,13 +80,16 @@ prettyExpr e = case e of
   Sig name typ e -> "sig " ++ name ++ " : " ++ render 0 typ ++ "; " ++ handle e
   ADT name vars cs next -> "adt " ++ name ++ " " ++ int " " vars ++ " = " ++
     int " | " (map (render 0) cs) ++ "; " ++ handle next
-  TypeClass supers className varName sigs next ->
-    "typeclass " ++ concatMap s supers ++ ". " ++ className ++ " " ++ varName ++
-    " = " ++ prettyExpr sigs ++ handle next
-    where s supName = supName ++ " " ++ varName ++ ", "
+  TypeClass name types sigs next ->
+    "typeclass " ++ name ++ " " ++ int " " (render 0 <$> types) ++
+    " = " ++ concatMap prettyExpr sigs ++ handle next
+  Instance name typ exprs next ->
+    "instance " ++ name ++ " " ++ render 0 typ ++ " = " ++
+    concatMap prettyExpr exprs ++ handle next
   where handle next = case next of Nothing -> ""
                                    Just e -> prettyExpr e
         int = intercalate
+        p (klass, var) = klass ++ " " ++ var
 
 data InString =
   Plain String
@@ -123,11 +127,7 @@ desugar expr = case expr of
     -- the last function returned an `(error)` indicating the match failed.
     -- see SPJ's book for more info.
     caseToLambda :: Expr -> [(Expr, Expr)] -> Expr
-    --caseToLambda _ [] = Var "(error)"
-    --caseToLambda e ((pat,res):ms) =
-    --  Apply (Apply (Var "(or)") (Apply (Lambda pat (rec res)) e)) (rec e ms)
     caseToLambda expr matches = foldr mkLambda (Var "(error)") matches where
       mkLambda (pattern, result) =
         Apply (Apply (Var "(or)") (Apply (Lambda pattern (rec result)) expr))
-    -- | adtToSigs makes a bunch of sig statements and creates a new Type which
-    -- should be added to the environment
+

@@ -71,7 +71,7 @@ pBinary = getPrecedences >>= pFrom 0 where
 keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
             "infixl", "infixr", "type", "typeclass", "typedef", "[]",
             "__matchError__", "__matchFail__"]
-keySyms = ["->", "|", "=", ";", "\\", "?"]
+keySyms = ["->", "|", "=", ";", "\\", "?", ":~", ":"]
 lexeme p = p <* skip
 sstring = lexeme . string
 schar = lexeme . char
@@ -94,7 +94,7 @@ getSym s = try $ do
 keyword k = lexeme . try $
   string k <* notFollowedBy alphaNum
 
-keysim k = lexeme . try $
+keysym k = lexeme . try $
   string k <* notFollowedBy symbolChars
 
 checkParse p = lexeme . try $ do
@@ -107,7 +107,7 @@ pDouble :: Parser Double
 pDouble = lexeme $ do
   ds <- many1 digit
   option (read ds) $ do
-    keysim "."
+    keysym "."
     ds' <- many1 digit
     return $ read (ds ++ "." ++ ds')
 
@@ -167,7 +167,7 @@ pVariable = checkParse $ do
   return $ first : rest ++ ticks
 
 pTypeVariable :: Parser String
-pTypeVariable = checkParse $ (:) <$> lower <*> many alphaNum
+pTypeVariable = checkParse $ (:) <$> lower <*> many letter
 
 pTypeName :: Parser String
 pTypeName = lexeme $ do
@@ -178,29 +178,32 @@ pTypeName = lexeme $ do
   <|> keyword "[]"
 
 pSymbol :: Parser String
-pSymbol = checkParse $ many1 symbolChars
-  <|> between (char '`') (char '`') pVariable
+pSymbol = do
+  parsed <- checkParse $ many1 symbolChars
+            <|> between (char '`') (char '`') pVariable
+  if not $ all (== '$') parsed then return parsed
+  else unexpected "Symbolic expressions cannot contain only `$`s"
 
 pList :: Parser Expr
 pList = List <$> between (schar '[') (schar ']') get where
   get = try (do
     start <- pExpr
-    keysim ".."
+    keysym ".."
     stop <- pExpr
     return $ ListRange start stop)
     <|> ListLiteral <$> (sepBy pExpr (schar ','))
 
 pParens :: Parser Expr
 pParens = do
-  es <- between (schar '(') (schar ')') $ sepBy pExpr (schar ',')
+  es <- between (schar '(') (schar ')') $ pExpr `sepBy` (schar ',')
   case es of
     [e] -> return e
     es -> return $ Tuple es
 
 pADT :: Parser Expr
 pADT = ADT <$ keyword "type" <*> pTypeName <*> many pTypeVariable
-           <* keysim "=" <*> pConstructors
-           <* keysim ";" <*> optionMaybe pExprs where
+           <* keysym "=" <*> pConstructors
+           <* keysym ";" <*> optionMaybe pExprs where
   pConstructor = try pSymConstructor <|> pVarConstructor
   pSymConstructor = do
     leftT <- pType
@@ -213,7 +216,7 @@ pADT = ADT <$ keyword "type" <*> pTypeName <*> many pTypeVariable
 pCase :: Parser Expr
 pCase = Case <$ keyword "case" <*> pExpr
              <* keyword "of"   <*> sepBy1 pMatch (schar '|') where
-  pMatch = (,) <$> pPattern <* keysim "->" <*> pExprs
+  pMatch = (,) <$> pPattern <* keysym "->" <*> pExprs
 
 -- | A pattern is an expression with a restricted syntax: restricted only to
 -- variables, type names, constants, and applications thereof. A pattern must
@@ -235,23 +238,19 @@ pPatternTerm = choice [pPatParens, pLit, pVar, pConstr, pPlaceholder] where
     case pats of
       [p] -> return p
       _ -> return $ Tuple pats
-  pPlaceholder = Placeholder <$ keysim "?"
+  pPlaceholder = Placeholder <$ keysym "?"
 
 pAnyVariable :: Parser Expr
-pAnyVariable = do
-  v <- pVariable
-  if v /= "_" then return $ Var v
-    else unexpected "Variable `_` can only be used in patterns"
-  <|> TypeName <$> pTypeName
+pAnyVariable = Var <$> pVariable <|> TypeName <$> pTypeName
 
 pTerm :: Parser Expr
-pTerm = choice [ Number <$> pDouble,
-                 pString,
-                 pAnyVariable,
-                 pParens,
-                 pLambda,
-                 pCase,
-                 pList ]
+pTerm = choice [ Number <$> pDouble
+               , pString
+               , pAnyVariable
+               , pParens
+               , pLambda
+               , pCase
+               , pList ]
 
 pRightAssoc :: Parser Expr -> Parser String -> Parser Expr
 pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
@@ -263,7 +262,7 @@ pRightAssoc pLeft pSym = optionMaybe pLeft >>= loop where
       (Nothing, Nothing) -> (Symbol sym)
       (Just left, Nothing) -> Apply (Symbol sym) left
       (Nothing, Just right) ->
-        -- should get an unused var here instead of _a
+        -- should get an unused var here, maybe put in a placeholder `(unused)`?
         Lambda (Var "_a") (Apply (Apply (Symbol sym) (Var "_a")) right)
       (Just left, Just right) ->
         Apply (Apply (Symbol sym) left) right
@@ -282,7 +281,7 @@ pApply = pDotted >>= parseRest where
 pDotted :: Parser Expr
 pDotted = pTerm >>= parseRest where
   parseRest res = do
-    keysim "."
+    keysym "."
     y <- pTerm
     parseRest (Dotted res y)
     <|> return res
@@ -294,9 +293,9 @@ pIf = If <$ keyword "if"   <*> pExpr
 
 pLambda :: Parser Expr
 pLambda = do
-  keysim "\\"
+  keysym "\\"
   patterns <- many1 pPatternTerm
-  keysim "->"
+  keysym "->"
   expr <- pExpr
   return $ lambda patterns expr where
     lambda [] e = e
@@ -305,9 +304,9 @@ pLambda = do
 pLet :: Parser Expr
 pLet = do
   name  <- keyword "let" *> (pVariable <|> pSymbol)
-  mType <- optionMaybe (keysim ":" *> pType)
+  mType <- optionMaybe (keysym ":" *> pType)
   patterns <- many pPatternTerm
-  body  <- keysim "=" *> pExprs <* keysim ";"
+  body  <- keysym "=" *> pExprs <* keysym ";"
   next  <- optionMaybe pExprs
   let thisLet = Let name (foldr Lambda body patterns) next
   return $ case mType of
@@ -316,24 +315,29 @@ pLet = do
 
 pSig :: Parser Expr
 pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
-           <* keysim ":" <*> pType <* keysim ";" <*> optionMaybe pExprs
+           <* keysym ":" <*> pType <* keysym ";" <*> optionMaybe pExprs
 
 pTTuple :: Parser Type
-pTTuple = pTApply `sepBy` (keysim ",") >>= \case
+pTTuple = pTApply `sepBy` (keysym ",") >>= \case
   [t] -> return t
   ts  -> return $ TTuple ts
 
 pType :: Parser Type
-pType = chainr1 pTTuple (keysim "->" *> pure (:=>))
+pType = chainr1 pTTuple (keysym "->" *> pure (:=>))
 
 pTApply :: Parser Type
 pTApply = chainl1 pTTerm (pure TApply)
 
 pTTerm = choice [pTParens, pTVar, pTConst, pListType] where
   pTParens = between (schar '(') (schar ')') pType
-  pTVar = TVar [] <$> pTypeVariable
+  pTVar = do
+    var <- pTypeVariable
+    option (TVar [] var) $ do
+      keysym ":~"
+      classes <- sepBy1 pTypeName (schar ',')
+      return (TVar classes var)
   pTConst = TConst <$> pTypeName
-  pListType = TApply (TConst "[]") <$ keysim "[" <*> pTTerm <* keysim "]"
+  pListType = TApply (TConst "[]") <$ keysym "[" <*> pTTerm <* keysym "]"
 
 pFixity :: Parser Expr
 pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
@@ -344,7 +348,7 @@ pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
     sstring key
     level <- read <$> many1 digit <* skip
     symbol <- pSymbol
-    keysim ";"
+    keysym ";"
     addFixity level assoc symbol
 
 addFixity :: Int -> (String -> Precedence) -> String -> Parser ()
@@ -356,6 +360,26 @@ addFixity level assoc symbol = if level < -1 || level > 9 then
     let precs = M.findWithDefault [] level table in
     M.insert level (assoc symbol : precs) table
 
+pTypeClass :: Parser Expr
+pTypeClass = TypeClass <$
+               keyword "typeclass" <*> pTypeName <*> many1 pTTerm <*
+               keysym "=" <*> many1 pSig' <* keysym ";" <*> optionMaybe pExprs
+  -- | @pSig'@ is like pSig but only parses single expressions, not chains.
+  where pSig' = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
+                    <* keysym ":" <*> pType <* keysym ";" <*> pure Nothing
+
+pInstance :: Parser Expr
+pInstance = Instance <$
+              keyword "instance" <*> pTypeName <*> pTTerm <* keysym "=" <*>
+              many1 pLet' <* keysym ";" <*> optionMaybe pExprs
+  where
+    -- | Similar to above, @pLet'@ is a simplified @pLet@
+    pLet' = do
+      name  <- keyword "let" *> (pVariable <|> pSymbol)
+      patterns <- many pPatternTerm
+      body  <- keysym "=" *> pExprs <* keysym ";"
+      return $ Let name (foldr Lambda body patterns) Nothing
+
 pExpr :: Parser Expr
 pExpr = choice [try pFixity, pIf, pSig, pLet, pADT, pBinary]
 
@@ -365,8 +389,12 @@ pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 parse :: Parser a -> UserState -> Source -> IO (Either ParseError a)
 parse p u s = runParserT p u "" s
 
+grab' :: Parser a -> Source -> IO (Either ParseError a)
+grab' parser = parse parser precedences
+
 grab :: String -> IO Expr
 grab s = parse parseIt precedences s >>= \case
   Right expr -> return expr
   Left err -> error $ show err
-  where parseIt = skip *> pExprs <* many (keysim ";") <* eof
+  where parseIt = skip *> pExprs <* many (keysym ";") <* eof
+

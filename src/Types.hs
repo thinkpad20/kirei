@@ -9,6 +9,7 @@ module Types (Type(..),
               Types(..),
               Sig(..),
               Substitutions(..),
+              renderMap,
               getClasses, builtinFuncs,
               unionAll, apply, type_,
               tmUnion, tmInsert, tmSingle,
@@ -82,8 +83,7 @@ instance Types Type where
 -- and return whatever type classes are associated with that variable
 getClasses :: Name -> Type -> [Name]
 getClasses name typ = case typ of
-  TVar classNames _ -> classNames
-  TConst _ -> []
+  TVar classNames name' | name == name' -> classNames
   TApply a b ->
     let classes = getClasses name a in
     if null classes then getClasses name b else classes
@@ -91,6 +91,7 @@ getClasses name typ = case typ of
   TTuple ts -> case ts ! map (getClasses name) ! filter (not . null) of
     [] -> []
     cs:_ -> cs
+  otherwise -> []
 
 
 instance Types Polytype where
@@ -117,23 +118,19 @@ type Substitutions = M.Map String Type
 (•) :: Substitutions -> Substitutions -> Substitutions
 s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 
+renderMap m = rndr pairs
+  where rndr [] = "{}"
+        rndr [pair] = "{" ++ toS pair ++ "}"
+        rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+        pairs = M.toList m ! filter isNotBuiltIn
+        toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
+        isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
+
 instance Render Substitutions where
-  render _ subs = rndr pairs
-    where rndr [] = "{}"
-          rndr [pair] = "{" ++ toS pair ++ "}"
-          rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-          pairs = M.toList subs ! filter isNotBuiltIn
-          toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
-          isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
+  render _ subs = renderMap subs
 
 instance Render TypeMap where
-  render _ tmap = rndr pairs
-    where rndr [] = "{}"
-          rndr [pair] = "{" ++ toS pair ++ "}"
-          rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-          pairs = M.toList tmap ! filter isNotBuiltIn
-          toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
-          isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
+  render _ tmap = renderMap tmap
 
 instance Render Polytype where
   render n (Polytype [] t) = render n t

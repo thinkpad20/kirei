@@ -10,7 +10,6 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 
 import Control.Monad.Error
-import Control.Monad.Reader
 import Control.Monad.State
 import Data.Monoid
 import qualified Text.PrettyPrint as PP
@@ -20,7 +19,8 @@ import Parser
 import Common
 import AST
 import Prelude hiding (foldr)
-import Types hiding (FreeVars(..))
+import Types
+import Defaults
 
 generalize :: TypeMap -> Type -> Polytype
 generalize env t = Polytype vars t
@@ -35,13 +35,7 @@ data TypeRecord = Checked Polytype
 type Record = M.Map Name TypeRecord
 
 instance Render Record where
-  render _ rec = rndr pairs
-    where rndr [] = "{}"
-          rndr [pair] = "{" ++ toS pair ++ "}"
-          rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-          pairs = M.toList rec ! filter isNotBuiltIn
-          toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
-          isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
+  render _ rec = renderMap rec
 
 instance Render TypeRecord where
   render _ (Checked ptype) = render 0 ptype
@@ -57,11 +51,11 @@ data InferrerState =
 
 runInferrer :: Inferrer a -> IO (Either String a, InferrerState)
 runInferrer t = runStateT (runErrorT t) initialState
-  where initialState = InferrerState { inferSupply = "a"
+  where initialState = InferrerState { inferSupply = "a0"
                                       , nameStack = ["(root)"]
                                       , records = mempty
-                                      , typeClasses = typeClasses'
-                                      , instances = instanceStore }
+                                      , typeClasses = defaultTypeClasses
+                                      , instances = defaultInstances }
 
 -- | Get a fresh new type variable to use
 newTypeVar :: [Name] -> Inferrer Type
@@ -74,7 +68,9 @@ newTypeVar classes = do
   return $ TVar classes var
   where
     next name = let (c:cs) = reverse name in
-      if c < 'z' then reverse $ succ c : cs else 'a' : (map (\_ -> 'a') name)
+      if c < '9' then reverse $ succ c : cs
+      else if (head name) < 'z' then (succ $ head name) : "0"
+      else map (\_ -> 'a') name ++ "0"
 
 instantiate :: Polytype -> Inferrer Type
 instantiate s@(Polytype vars t) = do
@@ -92,6 +88,7 @@ a `unify` b = do
     (TVar [] u, t) -> u `bind` t
     (t, TVar [] u) -> u `bind` t
     (TVar classNames u, t) -> do
+      --prnt $ "seeing if " ++ render 0 t ++ " implements " ++ show classNames
       res <- t `implements` classNames
       case res of
         True -> u `bind` t
@@ -184,7 +181,8 @@ infer env expr = case expr of
     (argS, argT) <- infer (applySub funcS env) arg
     --prnt $ "infered arg " ++ render 0 arg ++ " : " ++ render 0 argT
     unifyS <- unify (applySub argS funcT) (argT :=> resultT)
-    --prnt $ "the unified type of " ++ render 0 expr ++ " is " ++ show (applySub unifyS resultT)
+    --prnt $ "unify produced subs: " ++ render 0 unifyS
+    --prnt $ "the unified type of " ++ render 0 expr ++ " is " ++ render 0 (applySub unifyS resultT)
     return (unifyS • argS • funcS, applySub unifyS resultT)
   Let name expr' next -> do
     --prnt $ "infering `" ++ render 0 expr ++ "`"
@@ -213,7 +211,6 @@ infer env expr = case expr of
     -- create a new environment with that generalized type
         env2 = applySub exprSubs $ tmInsert name genT env
     -- make a record of this type
-
     register name (Checked genT)
     --prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
     --prnt $ "env has " ++ render 0 env
@@ -266,118 +263,18 @@ typeInference env e = uncurry applySub <$> infer env e
 
 test s = do
   expr <- grab s
-  (res, env) <- runInferrer (typeInference initials (desugar expr))
+  (res, env) <- runInferrer (typeInference defaultTypeMap (desugar expr))
   case res of
     Left err -> putStrLn $ "error: " ++ err ++ "\n"
     Right t  -> putStrLn $ "Expr: " ++ render 0 expr ++
                            "\nType: " ++ render 0 t ++ "\n\n" ++
                            "Env: " ++ render 0 (records env)
 
-
-{- TESTING... -}
-
-testInfer :: (Int, Expr) -> IO ()
-testInfer (i, e) = do
-  putStrLn $ "Test " ++ show i ++ ":\n\t'" ++ prettyExpr e ++ "'\n"
-  (res, _) <- runInferrer (typeInference M.empty e)
-  case res of
-    Left err -> putStrLn $ "error: " ++ err ++ "\n"
-    Right t  -> putStrLn $ prettyExpr e ++ " : " ++ render 0 t ++ "\n\n"
-
-testIt = main
-
-main :: IO ()
-main = do
-  e0 <- grab "let id = \\x -> x; id;"
-  e1 <- grab "let id = \\x -> x; id id;"
-  e2 <- grab "let id = \\x -> let y = x; y; id id;"
-  e3 <- grab "let id = \\x -> let y = x; y; id id 2;"
-  -- λx . x x should fail
-  e4 <- grab "let id = \\x -> x x; id;"
-  e5 <- grab "\\m -> let y = m; let x = y \"hello\"; x;"
-  mapM_ testInfer $ zip [0..] [e0, e1, e2, e3, e4, e5]
-
-initials = M.fromList
-  [
-    ("+", witha $ numa :=> numa :=> numa)
-  , ("-", witha $ numa :=> numa :=> numa)
-  , ("*", witha $ numa :=> numa :=> numa)
-  , ("/", witha $ numa :=> numa :=> numa)
-  , ("<", witha $ compa :=> compa :=> bool)
-  , (">", witha $ compa :=> compa :=> bool)
-  , ("<=", witha $ compa :=> compa :=> bool)
-  , (">=", witha $ compa :=> compa :=> bool)
-  , ("==", witha $ eqa :=> eqa :=> bool)
-  , ("!=", witha $ eqa :=> eqa :=> bool)
-  , ("(if)", witha $ bool :=> a :=> a :=> a)
-  , ("[]", witha $ listT a)
-  , ("::", witha $ a :=> listT a :=> listT a)
-  , ("(fail)", witha a)
-  , ("(error)", witha a)
-  , ("(or)", witha $ a :=> a :=> a)
-  , ("(range)", witha $ a :=> a :=> listT a)
-  , ("show", witha $ a' ["Show"] :=> str)
-  , ("map", withab $ (a :=> b) :=> f a :=> f b)
-  ]
-  where witha = Polytype ["a"]
-        withab = Polytype ["a", "b"]
-        a = TVar [] "a"
-        b = TVar [] "b"
-        a' classes = TVar classes "a"
-        f = TApply (TVar ["Functor"] "f")
-        listT = TApply (TConst "[]")
-        maybeT = TApply (TConst "Maybe")
-        numa = TVar ["Num"] "a"
-        compa = TVar ["Comp"] "a"
-        eqa = TVar ["Eq"] "a"
-
-adtToSigs :: Name -> [Name] -> [Constructor] -> Maybe Expr -> Expr
-adtToSigs name vars constructors next = makeSigs constructors where
-  newType = foldl' TApply (TConst name) (TVar [] <$> vars)
-  makeSigs (c:cs) = toSig c $ rest cs
-  toSig (Constructor n ts) = Sig n (foldr (:=>) newType ts)
-  rest [] = next
-  rest (c:cs) = Just $ toSig c $ rest cs
-
-kinds :: M.Map Name Kind
-kinds = M.fromList
-  [
-    ("[]", type_ :=> type_)
-  , ("Number", type_)
-  , ("String", type_)
-  , ("Bool", type_)
-  ]
-
-typeClasses' :: M.Map Name TypeClass
-typeClasses' = M.fromList
-  [
-    ("Applicative", TC (type_ :=> type_) "g" [pure_, apply_] ["Functor"])
-  , ("Functor", TC (type_ :=> type_) "f" [map_] [])
-  , ("Monad", TC (type_ :=> type_) "m" [return_, bind_] ["Applicative"])
-  , ("Show", TC type_ "a" [show_] [])
-  , ("Eq", TC type_ "a" [eq_] [])
-  , ("Ord", TC type_ "a" [succ_] ["Eq"])
-  ]
-  where a = TVar [] "a"
-        a' name = TVar [name] "a"
-        b = TVar [] "b"
-        f = TApply (TVar ["Functor"] "f")
-        g = TApply (TVar ["Applicative"] "g")
-        m = TApply (TVar ["Monad"] "m")
-        pure_ = TSig "pure" (a :=> g a)
-        apply_ = TSig "<*>" (g (a :=> b) :=> g a :=> g b)
-        map_ = TSig "map" ((a :=> b) :=> f a :=> f b)
-        eq_ = TSig "==" (a' "Eq" :=> a' "Eq" :=> bool)
-        succ_ = TSig "succ" (a' "Ord" :=> a' "Ord")
-        return_ = TSig "return" (a :=> m a)
-        bind_ = TSig ">>=" (m a :=> (a :=> m b) :=> m b)
-        show_ = TSig "show" (a' "Show" :=> str)
-
 -- | @implements@ checks if the list of type classes is implemented by
 -- the type given.
 implements :: Type -> [Name] -> Inferrer Bool
 typ `implements` classNames = do
-  prnt $ "Seeing if " ++ render 0 typ ++ " implements " ++ show classNames
+  --prnt $ "Seeing if " ++ render 0 typ ++ " implements " ++ show classNames
   results <- mapM check classNames
   return $ all (== True) results where
   check className = case typ of
@@ -385,9 +282,9 @@ typ `implements` classNames = do
     TVar [] _ -> return True
     TVar classNames' _ -> search classNames' className
     otherwise -> do
-      prnt $ "here we are"
+      --prnt $ "here we are"
       res <- typ `isInstance` className
-      prnt $ "Result we got was " ++ show res
+      --prnt $ "Result we got was " ++ show res
       return res
 
 -- @search@ recurses through the list of names until it finds itself or
@@ -419,39 +316,14 @@ typ `isInstance` className = do
     Nothing -> error $ "Invalid type class " ++ show className
     Just types -> any (== True) <$> mapM (isMatch typ) (S.toList types)
 
-instanceStore = M.fromList
-  [
-    ("Num",         S.fromList [num])
-  , ("Applicative", S.fromList [list])
-  , ("Eq",          S.fromList [ num
-                               , str
-                               , bool
-                               , listOf (a ["Eq"])
-                               ])
-  , ("Functor",     S.fromList [list])
-  , ("Show",        S.fromList [ num
-                               , str
-                               , bool
-                               , listOf (a ["Show"])
-                               ])
-  , ("Monoid",      S.fromList [ num
-                               , listOf (a [])])
-  , ("Comp",       S.fromList [ num
-                               , str
-                               , listOf (a ["Comp"])])
-  ]
-  where list = TConst "[]"
-        listOf = TApply list
-        a classes = TVar classes "a"
-
 isMatch :: Type -> Type -> Inferrer Bool
 tester `isMatch` stored = do
-  prnt $ "Seeing if " ++ render 0 tester ++ " is a match for " ++ render 0 stored
+  --prnt $ "Seeing if " ++ render 0 tester ++ " is a match for " ++ render 0 stored
   case (tester, stored) of
     -- if what we have stored is a variable, we can just use @implements@
     (tester, TVar classNames _) -> tester `implements` classNames
     (TConst n, TConst n') -> do
-      when (n == n') (prnt $ "w00t!")
+      --when (n == n') (prnt $ "w00t!")
       return $ n == n'
     (TApply a b , TApply c d) -> do
       res1 <- (a `isMatch` c)
@@ -461,3 +333,8 @@ tester `isMatch` stored = do
     (a :=> b, c :=> d) -> isMatch (TApply a b) (TApply c d)
     (a, b) -> return False
 
+
+toGenericName :: Polytype -> Polytype
+toGenericName p@(Polytype vars t) =
+  let subs = M.fromList $ zip vars ['a'..] in
+  applySub subs p
