@@ -8,13 +8,14 @@ import AST
 import Types
 import qualified Data.Map as M
 import Prelude hiding (foldr)
+import Control.Monad.State
 
 type UserState = PrecedenceTable
 type PrecedenceTable = M.Map Int [Precedence]
 type Source = String
 type Parser = ParsecT Source UserState IO
 
-data Precedence = LeftAssoc Name | RightAssoc Name | NonAssoc Name
+data Precedence = LeftAssoc Name | RightAssoc Name | NonAssoc Name deriving (Show)
 
 getPrecedences :: Parser PrecedenceTable
 getPrecedences = getState
@@ -52,21 +53,24 @@ precedences = M.fromList [
               where l = LeftAssoc; r = RightAssoc; n = NonAssoc
 
 pBinary :: Parser Expr
-pBinary = getPrecedences >>= pFrom 0 where
-  -- This will effectively loop from n = 0 through n = 9, each time attempting
-  -- all of the parsers at the level
-  pFrom :: Int -> PrecedenceTable -> Parser Expr
-  pFrom n precTable | n > 9     = pApply
-                    | otherwise = runPrecs precs where
-    precs :: [Precedence]
-    precs = M.findWithDefault [] n precTable
-    runPrecs :: [Precedence] -> Parser Expr
-    -- If we see a right/left/non associative symbol, attempt to parse
-    runPrecs (RightAssoc sym:syms) = pRightAssoc (runPrecs syms) (pSymbolOf sym)
-    runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (pSymbolOf sym)
-    runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (pSymbolOf sym)
-    -- When we run out of parsers to try, recurse on the next level
-    runPrecs [] = pFrom (n+1) precTable
+pBinary = do
+  precs <- getPrecedences
+  --prnt $ "Parsing a binary, precedences are " ++ show precs
+  getPrecedences >>= pFrom 0 where
+    -- This will effectively loop from n = 0 through n = 9, each time attempting
+    -- all of the parsers at the level
+    pFrom :: Int -> PrecedenceTable -> Parser Expr
+    pFrom n precTable | n > 9     = pApply
+                      | otherwise = runPrecs precs where
+      precs :: [Precedence]
+      precs = M.findWithDefault [] n precTable
+      runPrecs :: [Precedence] -> Parser Expr
+      -- If we see a right/left/non associative symbol, attempt to parse
+      runPrecs (RightAssoc sym:syms) = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+      runPrecs (LeftAssoc sym:syms)  = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+      runPrecs (NonAssoc sym:syms)   = pRightAssoc (runPrecs syms) (pSymbolOf sym)
+      -- When we run out of parsers to try, recurse on the next level
+      runPrecs [] = pFrom (n+1) precTable
 
 keywords = ["if", "then", "else", "let", "sig", "case", "of", "infix",
             "infixl", "infixr", "type", "typeclass", "typedef", "class"]
@@ -306,6 +310,7 @@ pLet = do
   mType <- optionMaybe (keysym ":" *> pType)
   patterns <- many pPatternTerm
   body  <- keysym "=" *> pExprs <* keysym ";"
+  defaultFixity name
   next  <- optionMaybe pExprs
   let thisLet = Let name (foldr Lambda body patterns) next
   return $ case mType of
@@ -313,8 +318,11 @@ pLet = do
     Just typ -> Sig name typ $ Just thisLet
 
 pSig :: Parser Expr
-pSig = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
-           <* keysym ":" <*> pType <* keysym ";" <*> optionMaybe pExprs
+pSig = do
+  name <- keyword "sig" >> (pVariable <|> pSymbol)
+  typ <- keysym ":" *> pType <* keysym ";"
+  defaultFixity name
+  Sig name typ <$> optionMaybe pExprs
 
 pTTuple :: Parser Type
 pTTuple = pTApply `sepBy` (keysym ",") >>= \case
@@ -350,22 +358,27 @@ pFixity = choice [pInfixL, pInfixR, pInfix] *> pExpr where
     keysym ";"
     addFixity level assoc symbol
 
-addFixity :: Int -> (String -> Precedence) -> String -> Parser ()
-addFixity level assoc symbol = if level < -1 || level > 9 then
-  error $ "Invalid fixity for `" ++ symbol ++
+addFixity :: Int -> (String -> Precedence) -> Name -> Parser ()
+addFixity level assoc symbol = do
+  if level < 0 || level > 9
+  then error $ "Invalid fixity for `" ++ symbol ++
           "`: Fixity levels must be between 0 and 9"
-  else modPrecedences $ add where
-  add table =
+  else modPrecedences $ \table ->
     let precs = M.findWithDefault [] level table in
     M.insert level (assoc symbol : precs) table
+
+defaultFixity :: Name -> Parser ()
+defaultFixity = addFixity 9 RightAssoc
 
 pTypeClass :: Parser Expr
 pTypeClass = TypeClass <$
                keyword "typeclass" <*> pTypeName <*> many1 pTTerm <*
                keysym "=" <*> many1 pSig' <* keysym ";" <*> optionMaybe pExprs
   -- | @pSig'@ is like pSig but only parses single expressions, not chains.
-  where pSig' = Sig <$ keyword "sig" <*> (pVariable <|> pSymbol)
-                    <* keysym ":" <*> pType <* keysym ";" <*> pure Nothing
+  where pSig' = do name <- keyword "sig" >> (pVariable <|> pSymbol)
+                   typ <- keysym ":" *> pType <* keysym ";"
+                   defaultFixity name
+                   return $ Sig name typ Nothing
 
 pInstance :: Parser Expr
 pInstance = Instance <$
@@ -377,6 +390,7 @@ pInstance = Instance <$
       name  <- keyword "let" *> (pVariable <|> pSymbol)
       patterns <- many pPatternTerm
       body  <- keysym "=" *> pExprs <* keysym ";"
+      defaultFixity name
       return $ Let name (foldr Lambda body patterns) Nothing
 
 pExpr :: Parser Expr
@@ -389,7 +403,7 @@ parse :: Parser a -> UserState -> Source -> IO (Either ParseError a)
 parse p u s = runParserT p u "" s
 
 grab' :: Parser a -> Source -> IO (Either ParseError a)
-grab' parser = parse parser precedences
+grab' parser = parse (parser <* eof) precedences
 
 grab :: String -> IO Expr
 grab s = parse parseIt precedences s >>= \case
@@ -397,3 +411,5 @@ grab s = parse parseIt precedences s >>= \case
   Left err -> error $ show err
   where parseIt = skip *> pExprs <* many (keysym ";") <* eof
 
+prnt :: String -> Parser ()
+prnt = lift . putStrLn
