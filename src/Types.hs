@@ -9,12 +9,9 @@ module Types (Type(..),
               Types(..),
               Sig(..),
               Substitutions(..),
-              renderMap,
+              renderMap, inherits,
               getClasses, builtinFuncs,
-              unionAll, apply, type_,
-              tmUnion, tmInsert, tmSingle,
-              tmElems, tmEmpty, tmLookup,
-              tmDelete, (•),
+              unionAll, type_, (•), sig,
               num, bool, str, tuple,
               bare, barev) where
 
@@ -34,6 +31,18 @@ data Type =
   | Type :=> Type  -- functions
   deriving (Show, Eq, Ord)
 
+data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
+
+data TypeClass = TC Type Kind [Sig] deriving (Show)
+
+type Kind = Type
+
+type Sig = (Name, Type)
+
+type TypeMap = M.Map Name Polytype
+
+type Substitutions = M.Map String Type
+
 infixr 4 :=>
 
 instance Render Type where
@@ -51,18 +60,15 @@ instance Render Type where
     where r = render 0
           int = intercalate
 
-data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
-
-builtinFuncs = S.fromList ["+", "-", "*", "/", ">", "<", ">=", "<=",
-                           "==", "!=", "::", "[]", "(if)", "(or)",
-                           "(error)", "(fail)", "(range)"]
-
 -- | The Types class describes objects which can contain free type
 -- variables, i.e. those which are not determined by their containers,
 -- and things to which we can apply type substitutions
 class Types a where
   free :: a -> S.Set String
   applySub :: Substitutions -> a -> a
+
+instance Show Sig where
+  show (name, typ) = name ++ " : " ++ show typ
 
 instance Types Type where
   free (TVar _ name) = S.singleton name
@@ -93,7 +99,6 @@ getClasses name typ = case typ of
     cs:_ -> cs
   otherwise -> []
 
-
 instance Types Polytype where
   free (Polytype vars t) = (free t) S.\\ (S.fromList vars)
   applySub s (Polytype vars t) =
@@ -103,28 +108,9 @@ instance Types a => Types [a] where
   free l = mconcat (map free l)
   applySub s = map (applySub s)
 
-type TypeMap = M.Map Name Polytype
-
 instance Types TypeMap where
   free env = free (M.elems env)
   applySub s env = applySub s <$> env
-
-instance Monoid TypeMap where
-  mempty = tmEmpty
-  mappend = tmUnion
-
-type Substitutions = M.Map String Type
-
-(•) :: Substitutions -> Substitutions -> Substitutions
-s1 • s2 = (applySub s1 <$> s2) `M.union` s1
-
-renderMap m = rndr pairs
-  where rndr [] = "{}"
-        rndr [(key, val)] = "{" ++ key ++ " : " ++ render 0 val ++ "}"
-        rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
-        pairs = M.toList m ! filter isNotBuiltIn
-        toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
-        isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
 
 instance Render Substitutions where
   render _ subs = renderMap subs
@@ -139,39 +125,44 @@ instance Render Polytype where
 instance Render () where
   render _ () = "()"
 
-tmLookup name m = M.lookup name m
-tmInsert name typ m = M.insert name typ m
-tmUnion m1 m2 = M.union m1 m2
-infixl 4 `tmUnion`
-tmElems m = M.elems m
-tmEmpty = M.empty
-tmSingle name typ = M.singleton name typ
-tmDelete name m = M.delete name m
-
-apply :: M.Map Name Type -> Type -> Type
-apply subs t@(TVar [] name) = M.findWithDefault t name subs
-apply _    (TConst name) = TConst name
-apply subs (TTuple ts)   = TTuple (apply subs <$> ts)
-apply subs (TApply a b)  = TApply (apply subs a) (apply subs b)
-apply subs (a :=> b)     = apply subs a :=> apply subs b
-
+-- Wrapper functions
+bare :: Type -> Polytype
 bare = Polytype []
+barev :: Name -> Polytype
 barev = bare . TVar []
+
+num, str, bool :: Type
 num  = TConst "Number"
 str  = TConst "String"
 bool = TConst "Bool"
-tuple = TTuple
 
-data Sig = TSig Name Type deriving (Show)
-type Kind = Type
+tuple :: [Type] -> Type
+tuple = TTuple
 
 type_ :: Kind
 type_ = TVar [] "(Type)"
 
-data TypeClass = TC
-  {
-    kind     :: Kind
-  , varName  :: Name
-  , sigs     :: [Sig]
-  , inherits :: [Name]
-  } deriving (Show)
+sig :: Name -> Type -> Sig
+sig name typ = (name, typ)
+
+-- Convenience functions
+renderMap :: Render a => M.Map Name a -> String
+renderMap m = rndr pairs
+  where rndr [] = "{}"
+        rndr [(key, val)] = "{" ++ key ++ " : " ++ render 0 val ++ "}"
+        rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+        pairs = M.toList m ! filter isNotBuiltIn
+        toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
+        isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
+
+(•) :: Substitutions -> Substitutions -> Substitutions
+s1 • s2 = (applySub s1 <$> s2) `M.union` s1
+
+inherits :: TypeClass -> [Name]
+inherits (TC (TVar inherits' _) _ _) = inherits'
+inherits tc = error $ "FATAL: malformed type class `" ++ show tc ++ "`"
+
+builtinFuncs = S.fromList [  "+", "-", "*", "/", ">"
+                           , "<", ">=", "<=", "=="
+                           , "!=", "::", "[]", "(if)", "(or)"
+                           , "(error)", "(fail)", "(range)"]

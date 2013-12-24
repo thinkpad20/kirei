@@ -164,24 +164,37 @@ getNS = get <!> nameStack <!> reverse <!> intercalate "."
 
 infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
 infer env expr = case expr of
-  String _ -> noSubs str
-  Number _ -> noSubs num
-  Bool _ -> noSubs bool
+  String _ -> only str
+  Number _ -> only num
+  Bool _ -> only bool
   Tuple exprs -> do
     subsAndTypes <- mapM (infer env) exprs
     let subs' = mconcat (map fst subsAndTypes)
     return (subs', TTuple $ map snd subsAndTypes)
   -- symbols are same as variables in this context
   Symbol s -> infer env (Var s)
-  Var n -> case M.lookup n env of
-    Nothing -> throwError' $ "Unknown variable: " ++ n
-    Just sigma -> instantiate sigma >>= noSubs
+  Var name -> case M.lookup name env of
+    -- if it's not in the env, it might just be declared
+    Nothing -> nsLookup name >>= \case
+      -- if it hasn't been declared, that's definitely an error
+      Nothing -> throwError' $ "Unknown variable: " ++ name
+      -- if it's a checked type it should be in the env, but just in case...
+      Just (Checked polytype) -> only =<< instantiate polytype
+      -- if it's declared, we'll trust it but we need to work some magic on it
+      Just (Declared typ) -> do
+        -- generalizing will make a polytype with fresh type variables
+        let generalized = generalize mempty typ
+        -- we then instantiate, which turns it back into a Type
+        typ' <- instantiate generalized
+        -- and then we can return it with no substitutions
+        only typ'
+    Just polytype -> only =<< instantiate polytype
   TypeName n -> infer env (Var n)
   Lambda pattern body -> do
     --prnt $ "env was " ++ show env
     (vars, paramT) <- inferPattern env pattern
     --prnt $ "inferring pattern " ++ render 0 pattern ++ " gave vars " ++ show vars
-    let env' = tmUnion (bare <$> vars) env
+    let env' = M.union (bare <$> vars) env
     --prnt $ "env is now " ++ show env'
     (subs, bodyT) <- infer env' body
     --prnt $ "LAMBDA inferred the body type of " ++ render 0 body ++ " to be " ++ render 0 bodyT
@@ -222,7 +235,7 @@ infer env expr = case expr of
         render 0 t ++ "`)"
     --prnt $ "created a new var " ++ show newT ++ " for " ++ name
     -- create a new environment with that mapping added
-    let env1 = tmInsert name (bare newT) env
+    let env1 = M.insert name (bare newT) env
     --prnt $ "env1 is " ++ render 0 env1
     -- infer expr with that environment
     (exprSubs, exprT) <- pushNS name >> infer env1 expr' >>== popNS
@@ -234,7 +247,7 @@ infer env expr = case expr of
     --prnt $ "generalizing with respect to env " ++ render 0 (applySub (exprSubs) env) ++ " which has free variables " ++ show (free (applySub exprSubs env)) ++ " while exprT has free variables " ++ show (free exprT')
     let genT = generalize (applySub (subs • exprSubs) env) exprT'
     -- create a new environment with that generalized type
-        env2 = applySub exprSubs $ tmInsert name genT env
+        env2 = applySub exprSubs $ M.insert name genT env
     -- make a record of this type
     register name (Checked genT)
     --prnt $ "that type generalizes to " ++ render 0 genT ++ "; this will be assigned into variable `" ++ name ++ "`"
@@ -252,10 +265,10 @@ infer env expr = case expr of
       Just (Checked t) -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
       Just (Declared t) -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
       Nothing -> register name (Declared typ) >> case next of
-        Nothing -> noSubs (tuple [])
+        Nothing -> only (tuple [])
         Just expr -> infer env expr
   otherwise -> throwError' $ "Unhandleable expression " ++ prettyExpr expr
-  where noSubs t = return (mempty, t)
+  where only t = return (mempty, t)
         newvar = newTypeVar []
         inferPattern env pat = case pat of
           Var v -> do
@@ -272,10 +285,10 @@ infer env expr = case expr of
             returnT <- newvar
             subs3 <- unify funcT (argT :=> returnT)
             return (subs3 • subs2 • subs1, applySub subs3 returnT)
-          Placeholder -> newvar >>= noSubs
-          Number _ -> noSubs num
-          String _ -> noSubs str
-          Bool   _ -> noSubs bool
+          Placeholder -> newvar >>= only
+          Number _ -> only num
+          String _ -> only str
+          Bool   _ -> only bool
 
 prnt :: String -> Inferrer ()
 prnt = lift . lift . putStrLn
@@ -309,8 +322,9 @@ typ `implements` classNames = do
       --prnt $ "Result we got was " ++ show res
       return res
 
--- @search@ recurses through the list of names until it finds itself or
--- runs out of names to look through
+-- @search@ recurses through the list of names; if it finds itself it returns
+-- true; otherwise it gets the parents of all the types and recurses on that.
+-- If it runs out of names to look through it returns false.
 search :: [Name] -> Name -> Inferrer Bool
 search classNames className = case classNames of
     -- if we've run out of names, then we didn't find ourselves
@@ -325,12 +339,12 @@ search classNames className = case classNames of
     -- @getParents@ is a wrapper for looking up the class and calling inherits
     getParents :: Name -> Inferrer [Name]
     getParents className = get <!> typeClasses <!> M.lookup className >>= \case
-      Nothing -> error $ "Wtf " ++ className ++ " wasn't found"
+      Nothing -> error $ "FATAL: type class `" ++ className ++ "` wasn't found"
       Just tclass -> return $ inherits tclass
 
--- | @isInstance@ checks if a type is an instance of a type class. It looks
--- the set of instances up in the @instances@ dictionary and iterates through
--- it, asking if the type is a match for any of the instances.
+-- | @isInstance@ checks if a list of types make up an instance of a type
+-- class. It looks the set of instances up in the @instances@ dictionary and
+-- iterates through it, asking if the types are a match for any of the instances.
 isInstance :: Type -> Name -> Inferrer Bool
 typ `isInstance` className = do
   --prnt $ "Seeing if " ++ render 0 typ ++ " is an instance of " ++ className

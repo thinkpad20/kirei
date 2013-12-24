@@ -21,19 +21,26 @@ let ++ list1 list2 = case list1 of
   [] -> list2
 | a::as -> a :: (as ++ list2);
 
+let <~ f g = \x -> f (g x);
+let ~> f g = \x -> g (f x);
+
 let reverse list =
    let reverse' acc list' = case list' of
      [] -> acc
    | a::as -> reverse' (a::acc) as;
    reverse' [] list;
 
-let map f list = case list of
-  [] -> []
-| a :: as -> f a :: map f as;
+let lmap f =
+  let map acc list = case list of
+    [] -> acc
+  | x :: xs -> map (f x::acc) xs;
+  map [] ~> reverse;
 
-let filter f list = case list of
-  [] -> []
-| a :: as -> if f a then a :: filter f as else filter f as;
+let filter f list =
+  let filter' acc list = case list of
+    [] -> acc
+  | x :: xs -> if f x then filter' (x :: acc) xs else filter' acc xs;
+  filter' [] list;
 
 let foldr step start list = case list of
   [] -> start

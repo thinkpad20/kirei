@@ -69,12 +69,12 @@ defaultInstances = M.fromList
 defaultTypeClasses :: M.Map Name TypeClass
 defaultTypeClasses = M.fromList
   [
-    ("Applicative", TC (type_ :=> type_) "g" [pure_, apply_] ["Functor"])
-  , ("Functor", TC (type_ :=> type_) "f" [map_] [])
-  , ("Monad", TC (type_ :=> type_) "m" [return_, bind_] ["Applicative"])
-  , ("Show", TC type_ "a" [show_] [])
-  , ("Eq", TC type_ "a" [eq_] [])
-  , ("Ord", TC type_ "a" [succ_] ["Eq"])
+    ("Applicative", TC (TVar ["Functor"] "g") (type_ :=> type_) [pure_, apply_])
+  , ("Functor", TC (TVar [] "f") (type_ :=> type_) [map_])
+  , ("Monad", TC (TVar ["Applicative"] "m") (type_ :=> type_) [return_, bind_])
+  , ("Show", TC (TVar [] "a") type_ [show_])
+  , ("Eq", TC (TVar [] "a") type_ [eq_])
+  , ("Ord", TC (TVar ["Eq"] "a") type_ [succ_])
   ]
   where a = TVar [] "a"
         a' name = TVar [name] "a"
@@ -82,11 +82,11 @@ defaultTypeClasses = M.fromList
         f = TApply (TVar ["Functor"] "f")
         g = TApply (TVar ["Applicative"] "g")
         m = TApply (TVar ["Monad"] "m")
-        pure_ = TSig "pure" (a :=> g a)
-        apply_ = TSig "<*>" (g (a :=> b) :=> g a :=> g b)
-        map_ = TSig "map" ((a :=> b) :=> f a :=> f b)
-        eq_ = TSig "==" (a' "Eq" :=> a' "Eq" :=> bool)
-        succ_ = TSig "succ" (a' "Ord" :=> a' "Ord")
-        return_ = TSig "return" (a :=> m a)
-        bind_ = TSig ">>=" (m a :=> (a :=> m b) :=> m b)
-        show_ = TSig "show" (a' "Show" :=> str)
+        pure_ = sig "pure" (a :=> g a)
+        apply_ = sig "<*>" (g (a :=> b) :=> g a :=> g b)
+        map_ = sig "map" ((a :=> b) :=> f a :=> f b)
+        eq_ = sig "==" (a' "Eq" :=> a' "Eq" :=> bool)
+        succ_ = sig "succ" (a' "Ord" :=> a' "Ord")
+        return_ = sig "return" (a :=> m a)
+        bind_ = sig ">>=" (m a :=> (a :=> m b) :=> m b)
+        show_ = sig "show" (a' "Show" :=> str)
