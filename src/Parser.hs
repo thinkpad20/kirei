@@ -34,7 +34,7 @@ skip = spaces *> many (choice [try blockComment,
       spaces
     blockComment = do
       string "/*"
-      manyTill anyChar (try $ string "*/")
+      anyChar `manyTill` try (string "*/")
       spaces
 
 precedences :: PrecedenceTable
@@ -394,7 +394,14 @@ pInstance = Instance <$
       return $ Let name (foldr Lambda body patterns) Nothing
 
 pExpr :: Parser Expr
-pExpr = choice [try pFixity, pIf, pSig, pLet, pADT, pBinary]
+pExpr = choice [ try pFixity
+               , pIf
+               , pSig
+               , pLet
+               , pADT
+               , pTypeClass
+               , pInstance
+               , pBinary]
 
 pExprs :: Parser Expr
 pExprs = chainl1 pExpr (schar ',' *> pure Comma)

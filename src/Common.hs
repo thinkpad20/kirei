@@ -1,9 +1,31 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
-module Common ((~>), (!), (<$>), (<!>),
-               pure, (<*>), (<$), (*>),
-               (<*), intercalate, Name,
-               foldl', foldr, isInt, unionAll,
-               Render(..), (<>), (>>==), Monoid(..)) where
+module Common ( Name
+              , Render(..)
+              , Monoid(..)
+              , StateT(..)
+              , ErrorT(..)
+              , MonadState(..)
+              , MonadError(..)
+              , (~>)
+              , (!)
+              , (<$>)
+              , (<!>)
+              , pure
+              , (<*>)
+              , (<$)
+              , (*>)
+              , (<*)
+              , intercalate
+              , foldl'
+              , foldr
+              , isInt
+              , unionAll
+              , gets
+              , modify
+              , lift
+              , zipWithM
+              , (<>)
+              , (>>==)) where
 
 import Prelude hiding (foldl', foldr)
 import Data.Foldable (foldl', foldr)
@@ -11,6 +33,8 @@ import Data.List (intercalate)
 import Control.Applicative
 import Data.Monoid
 import qualified Data.Set as S
+import Control.Monad.Error
+import Control.Monad.State
 
 (~>) = flip (.)
 infixr 9 ~>

@@ -1,19 +1,23 @@
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances, OverlappingInstances #-}
-module Types (Type(..),
-              Kind,
-              TypeClass(..),
-              Polytype(..),
-              TypeMap(..),
-              Types(..),
-              Sig(..),
-              Substitutions(..),
-              renderMap, inherits,
-              getClasses, builtinFuncs,
-              unionAll, type_, (•), sig,
-              num, bool, str, tuple,
-              bare, barev) where
+module Types ( Type(..)
+              , Kind
+              , TypeClass(..)
+              , Polytype(..)
+              , TypeMap(..)
+              , Types(..)
+              , Sig(..)
+              , Substitutions(..)
+              , Instance(..)
+              , Inferrer(..)
+              , InferrerState(..)
+              , TypeRecord(..)
+              , TypeCheckError(..)
+              , defaultInstances, defaultTypeMap
+              , renderMap, inherits, getClasses, builtinFuncs
+              , unionAll, type_, (•), sig, num, bool, str, tuple
+              , bare, barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -33,15 +37,44 @@ data Type =
 
 data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
 
-data TypeClass = TC Type Kind [Sig] deriving (Show)
-
-type Kind = Type
-
-type Sig = (Name, Type)
-
 type TypeMap = M.Map Name Polytype
 
 type Substitutions = M.Map String Type
+
+type Kind = Type
+
+data TypeClass = TC Type Kind [Sig] deriving (Show)
+
+type Sig = (Name, Type)
+
+type Instance = Type
+
+-- Type checker machinery, shared by TypeChecker and TypeClass
+
+type Inferrer = ErrorT String (StateT InferrerState IO)
+type TypeCheckError = String
+
+data TypeRecord = Checked Polytype
+                | Declared Type
+                deriving (Show)
+
+type Record = M.Map Name TypeRecord
+
+instance Render Record where
+  render _ rec = renderMap rec
+
+instance Render TypeRecord where
+  render _ (Checked ptype) = render 0 ptype
+  render _ (Declared _type) = render 0 _type
+
+data InferrerState =
+  InferrerState { inferSupply :: Name
+                , nameStack   :: [Name]
+                , records   :: Record
+                , kinds :: M.Map Name Kind
+                , typeClasses :: M.Map Name TypeClass
+                , instances :: M.Map Name (S.Set Type)
+                } deriving (Show)
 
 infixr 4 :=>
 
@@ -113,10 +146,16 @@ instance Types TypeMap where
   applySub s env = applySub s <$> env
 
 instance Render Substitutions where
-  render _ subs = renderMap subs
+  render _ = renderMap
 
 instance Render TypeMap where
-  render _ tmap = renderMap tmap
+  render _ = renderMap
+
+instance Render (M.Map Name TypeClass) where
+  render _ = renderMap
+
+instance Render TypeClass where
+  render _ = show
 
 instance Render Polytype where
   render n (Polytype [] t) = render n t
@@ -166,3 +205,65 @@ builtinFuncs = S.fromList [  "+", "-", "*", "/", ">"
                            , "<", ">=", "<=", "=="
                            , "!=", "::", "[]", "(if)", "(or)"
                            , "(error)", "(fail)", "(range)"]
+
+-- Default/initial versions of type checking data
+
+defaultTypeMap = M.fromList
+  [
+    ("+", witha $ numa :=> numa :=> numa)
+  , ("-", witha $ numa :=> numa :=> numa)
+  , ("*", witha $ numa :=> numa :=> numa)
+  , ("/", witha $ numa :=> numa :=> numa)
+  , ("<", witha $ compa :=> compa :=> bool)
+  , (">", witha $ compa :=> compa :=> bool)
+  , ("<=", witha $ compa :=> compa :=> bool)
+  , (">=", witha $ compa :=> compa :=> bool)
+  , ("==", witha $ eqa :=> eqa :=> bool)
+  , ("!=", witha $ eqa :=> eqa :=> bool)
+  , ("(if)", witha $ bool :=> a :=> a :=> a)
+  , ("[]", witha $ listT a)
+  , ("::", witha $ a :=> listT a :=> listT a)
+  , ("(fail)", witha a)
+  , ("(error)", witha a)
+  , ("(or)", witha $ a :=> a :=> a)
+  , ("(range)", witha $ a :=> a :=> listT a)
+  , ("show", witha $ a' ["Show"] :=> str)
+  , ("map", withab $ (a :=> b) :=> f a :=> f b)
+  ]
+  where witha = Polytype ["a"]
+        withab = Polytype ["a", "b"]
+        a = TVar [] "a"
+        b = TVar [] "b"
+        a' classes = TVar classes "a"
+        f = TApply (TVar ["Functor"] "f")
+        listT = TApply (TConst "[]")
+        maybeT = TApply (TConst "Maybe")
+        numa = TVar ["Num"] "a"
+        compa = TVar ["Comp"] "a"
+        eqa = TVar ["Eq"] "a"
+
+defaultInstances :: M.Map Name (S.Set Instance)
+defaultInstances = M.fromList
+  [
+    ("Num",         S.fromList [num])
+  , ("Eq",          S.fromList [ num
+                               , str
+                               , bool
+                               , listOf (a ["Eq"])
+                               ])
+  , ("Show",        S.fromList [ num
+                               , str
+                               , bool
+                               , listOf (a ["Show"])
+                               ])
+  , ("Monoid",      S.fromList [ num
+                               , listOf (a [])])
+  , ("Comp",       S.fromList [ num
+                               , str
+                               , listOf (a ["Comp"])])
+  , ("Applicative", S.fromList [list])
+  , ("Functor",     S.fromList [list])
+  ]
+  where list = TConst "[]"
+        listOf = TApply list
+        a classes = TVar classes "a"
