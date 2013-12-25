@@ -8,7 +8,7 @@ import Control.Monad.Identity
 import Data.Monoid
 import Control.Applicative
 import Debug.Trace
-import Data.Char (toLower, isUpper)
+import Data.Char (toLower)
 import Prelude hiding (foldr)
 import Common
 import AST
@@ -54,7 +54,6 @@ boolAndAssigns argName expr = (bools, assignments) where
     where eq e1 e2 = Just $ J.Binary "===" e1 e2
           eq' f a = eq argName $ f a
           aRef n = J.ArrayReference argName (J.Number n)
-          isConstructor (c:_) = isUpper c
           (Just e1) `and` (Just e2) = Just $ J.Binary "&&" e1 e2
           a `and` b = a `mplus` b
           -- make an AND of all the a==b expressions in subcompilations
@@ -112,9 +111,11 @@ makeConstructors name cs = mconcat (construct ~> single <$> cs) where
 eToBlk :: Expr -> J.Block
 eToBlk expr = case expr of
   If c t f -> single $ J.If (eToE c) (eToBlk t) (eToBlk f)
-  Let v e e' -> case e' of
-    Nothing -> single $ J.Assign (J.Var v) $ eToE e
-    Just e' -> eToBlk (Let v e Nothing) <> eToBlk e'
+  Let name e e' -> case e' of
+    -- if there's no next expression, make a singleton block
+    Nothing -> single $ J.Assign (J.Var $ makeName name) $ eToE e
+    -- otherwise, do the same but then append on the next guy
+    Just e' -> eToBlk (Let name e Nothing) <> eToBlk e'
   Apply a (Tuple es) -> call (eToE a) (eToE <$> es)
   Apply a b -> call (eToE a) [eToE b]
   Comma e1 e2 -> compile e1 <> eToBlk e2
@@ -124,6 +125,8 @@ eToBlk expr = case expr of
     Just e' -> makeConstructors name cs <> eToBlk e'
   e -> single $ J.Return $ eToE e
   where call e es = single $ J.Return $ J.Call e es
+        makeName name | isSymbol name = toString name
+                      | otherwise = name
 
 -- eToE compiles an expression to a JS expression. This is used when we
 -- are inside of another expression, or some other situation where we don't
@@ -214,3 +217,5 @@ toString s = (map fromChar ~> concat) s where
   fromChar '!' = "bang"
   fromChar '@' = "at"
   fromChar ':' = "col"
+
+test = ppJS
