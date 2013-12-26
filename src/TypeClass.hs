@@ -16,8 +16,8 @@ makeTypeClass name types parsedSigs = case types of
     checkUnique name
     sigs <- flip mapM parsedSigs $ \case
       Sig name typ _ -> return (name, typ)
-      e -> throwError $ "FATAL: Invalid expression `" ++ show e ++
-                        " `in type class signature list"
+      someExpr -> throwError $ "FATAL: Invalid expression `" ++
+                               show someExpr ++ " `in type class signature list"
     checkDups sigs
     kind <- inferKind typ sigs
     mapM_ validate sigs
@@ -43,23 +43,26 @@ makeTypeClass name types parsedSigs = case types of
 -- looks through all of its type signatures and finds the kind
 -- of the type based on them.
 inferKind :: Type -> [(Name, Type)] -> Inferrer Kind
-inferKind (TVar classes name) sigs = checkKinds =<< mapM find sigs where
+inferKind (TVar classes varName) sigs = checkKinds =<< mapM find sigs where
   find :: (Name, Type) -> Inferrer Kind
   find (funcName, typ) = check funcName $ f typ where
     f :: Type -> Either String [Kind]
     f typ = case typ of
       -- if it's this variable, return a single type
-      TVar _ name' | name == name' -> return [type_]
-      TApply tL tR -> f tL >>= \kL -> f tR >>= \kR -> case (kL, kR) of
-        -- no kinds found here (e.g. the @(a->b)@ in fmap)
-        ([], []) -> return []
-        -- kind found on right hand side of application
-        ([], kind : _) -> return [kind]
-        -- kind found on left-hand side of application (e.g. @f a@ in fmap)
-        (kind : _, []) -> return [kind :=> type_]
-        -- error, e.g. if we tried to make a signature @f f@
-        (kinds, kinds') -> Left $ "Infinite kind, type variable `" ++ name ++
-                                  "` is applied to itself"
+      TVar _ name | name == varName -> return [type_]
+      TApply typeFunc typeArg -> do
+        funcKind <- f typeFunc
+        argKind <- f typeArg
+        case (funcKind, argKind) of
+          -- no kinds found here (e.g. the @(a->b)@ in fmap)
+          ([], []) -> return []
+          -- kind found on right hand side of application
+          ([], kind : _) -> return [kind]
+          -- kind found on left-hand side of application (e.g. @f a@ in fmap)
+          (kind : _, []) -> return [kind :=> type_]
+          -- error, e.g. if we tried to make a signature @f f@
+          (kinds, kinds') -> Left $ "Infinite kind, type variable `" ++
+                                    varName ++ "` is applied to itself"
       -- in a function just append the two results together
       t1 :=> t2 -> pure (++) <*> f t1 <*> f t2
       -- just map over the types
@@ -72,26 +75,28 @@ inferKind (TVar classes name) sigs = checkKinds =<< mapM find sigs where
   check :: Name -> Either String [Kind] -> Inferrer Kind
   check fname kinds = case kinds of
     Left err -> throwError err
-    Right [] -> throwError $ "Type variable `" ++ name ++ "` was not " ++
+    Right [] -> throwError $ "Type variable `" ++ varName ++ "` was not " ++
                        "found in method `" ++ fname ++ "`, could not infer kind"
     Right (k:kinds) ->
       if all (== k) kinds then return k
-      else throwError $ "Inferred multiple kinds for `" ++ name ++ "`"
+      else throwError $ "Inferred multiple kinds for `" ++ varName ++ "`"
 
   -- | @checkKinds@ makes sure that all kinds inferred are equal and if
   -- parent classes have been declared, that it's equal to them too.
   checkKinds :: [Kind] -> Inferrer Kind
   checkKinds [] = error $ "FATAL: no kinds generated"
   checkKinds (k:ks) =
-    if not $ all (== k) ks then throwError $ "Non-matching kinds for type " ++
-                                           " variable `" ++ name ++ "`"
+    if not $ all (== k) ks
+    then throwError $ "Non-matching kinds for type variable `" ++ varName ++ "`"
     else do
-      -- find the kinds of its parents (will also check existence)
+      -- find the kinds of its parents (will throw error if nonexistent)
       parentKinds <- mapM lookupKindFromTypeClass classes
       -- make sure they all have the same kind
-      if all (== k) parentKinds then return k
-      else throwError $ "Kind of `" ++ name ++ "` does not match kind " ++
-                            "of one or more parent classes"
+      case filter (/= k) parentKinds of
+        [] -> return k
+        kind:_ ->
+          throwError $ "Kind of `" ++ varName ++ "` does not match kind " ++
+                        "parent classes, which have kind `" ++ render 0 kind ++ "`"
 
 
 defaultTypeClasses :: M.Map Name TypeClass
@@ -131,7 +136,8 @@ lookupKind name = gets kinds <!> M.lookup name >>= \case
   Just kind -> return kind
   Nothing -> throwError $ "Unknown type constant `" ++ name ++ "`"
 
--- | @validate@ will ensure that a type has a kind `Type`
+-- | @validate@ will ensure that a type has a kind `Type` and report errors
+-- Possibly todo: merge this and inferKind into one function
 validate :: Sig -> Inferrer ()
 validate (name, typ) = do
   kind <- checkKind typ

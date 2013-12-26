@@ -82,7 +82,7 @@ schar = lexeme . char
 symChars = "><=+-*/^~!%@&$:.#|?"
 
 isSymbol :: Name -> Bool
-isSymbol = all (`elem` symChars)
+isSymbol name = all (`elem` symChars) name && not (all (== '$') name)
 
 symbolChars :: Parser Char
 symbolChars = oneOf symChars

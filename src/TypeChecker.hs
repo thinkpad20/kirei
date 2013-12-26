@@ -35,11 +35,11 @@ test s = do
   expr <- grab s
   (res, env) <- runInferrer (typeInference defaultTypeMap (desugar expr))
   case res of
-    Left err -> putStrLn $ "error: " ++ err ++ "\n"
+    Left err -> putStrLn $ "Type check error: " ++ err ++ "\n"
     Right t  -> putStrLn $ "Expr: " ++ render 0 expr ++
-                           "\nType: " ++ render 0 t ++ "\n" ++
-                           "Env:  " ++ render 0 (records env) ++
-                           "TypeClasses" ++ render 0 (typeClasses env)
+                           "\nType: " ++ render 0 t ++
+                           "\nEnv:  " ++ render 0 (records env) ++
+                           "\nTypeClasses: " ++ render 0 (typeClasses env)
 
 generalize :: TypeMap -> Type -> Polytype
 generalize env t = Polytype vars' t'
@@ -127,11 +127,6 @@ a `unify` b = do
                                      , "variable with respect to type "
                                      , render 0 typ]
 
-throwError' :: String -> Inferrer a
-throwError' message = do
-  ns <- getNS
-  throwError (message ++ "\nOccurred when type checking " ++ ns)
-
 getFull :: Name -> Inferrer Name
 getFull name = getNS <!> (++ "." ++ name)
 
@@ -160,9 +155,10 @@ infer env expr = case expr of
   Number _ -> only num
   Bool _ -> only bool
   Tuple exprs -> do
+    -- subsAndTypes is a list of ({Name: Type}, Type)
     subsAndTypes <- mapM (infer env) exprs
-    let subs' = mconcat (map fst subsAndTypes)
-    return (subs', TTuple $ map snd subsAndTypes)
+    -- collect all the subs (fst), and make a type tuple of all the types (snd)
+    return (mconcat $ map fst subsAndTypes, TTuple $ map snd subsAndTypes)
   -- symbols are same as variables in this context
   Symbol s -> infer env (Var s)
   Var name -> case M.lookup name env of
@@ -191,17 +187,8 @@ infer env expr = case expr of
     resultT <- newvar
     (funcS, funcT) <- infer env func
     (argS, argT) <- infer (applySub funcS env) arg
-    unifyS <- do
-      unify (applySub argS funcT) (argT :=> resultT)
-      `catchError`
-      \msg -> do
-        let msg' = concat [ "Type unification error:\n", msg
-                          , "\nWhile type checking the expression `"
-                          , render 0 expr, "`\nThe left-hand side of "
-                          , "this expression has type `", render 0 funcT
-                          , "`, and the right-hand side has type `"
-                          , render 0 argT, "`."]
-        throwError msg'
+    unifyS <- unify (applySub argS funcT) (argT :=> resultT)
+                `catchError` unificationError expr funcT argT
     return (unifyS • argS • funcS, applySub unifyS resultT)
   Let name expr' next -> do
     -- create a new variable for the name
@@ -237,12 +224,9 @@ infer env expr = case expr of
       Nothing -> register name (Declared typ) >> handle next
       Just _ -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
   TypeClass name types sigs next -> do
-    tclass <- makeTypeClass name types sigs `catchError` handler
+    tclass <- makeTypeClass name types sigs `catchError` typeClassError name
     addTypeClass name tclass
     handle next
-    where handler msg = throwError' $ concat [ "Invalid declaration for type "
-                                             , "class `", name, "`. Error "
-                                             , "returned was: ", msg]
   otherwise -> throwError' $ "Unhandleable expression " ++ prettyExpr expr
   where
     only t = return (mempty, t)
@@ -252,6 +236,10 @@ infer env expr = case expr of
       Just expr -> infer env expr
     addTypeClass name _class = modify $
       \s -> s { typeClasses = M.insert name _class (typeClasses s) }
+
+throwError' message = do
+  ns <- getNS
+  throwError (message ++ "\nOccurred when type checking " ++ ns)
 
 inferPattern :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
 inferPattern env pat = case pat of
@@ -268,6 +256,7 @@ inferPattern env pat = case pat of
     (subs2, argT) <- inferPattern env arg
     returnT <- newvar
     subs3 <- unify funcT (argT :=> returnT)
+              `catchError` unificationError pat funcT argT
     return (subs3 • subs2 • subs1, applySub subs3 returnT)
   Placeholder -> newvar >>= only
   Number _ -> only num
@@ -278,3 +267,20 @@ inferPattern env pat = case pat of
 
 prnt :: String -> Inferrer ()
 prnt = lift . lift . putStrLn
+
+-- Error handlers
+unificationError :: Expr -> Type -> Type -> TypeCheckError -> Inferrer a
+unificationError expr funcT argT msg =
+  let msg' = concat [ "Type unification error:\n", msg
+                    , "\nWhile type checking the expression `"
+                    , render 0 expr, "`\nThe left-hand side of "
+                    , "this expression has type `", render 0 funcT
+                    , "`, and the right-hand side has type `"
+                    , render 0 argT, "`."]
+  in throwError msg'
+
+typeClassError :: Name -> TypeCheckError -> Inferrer a
+typeClassError name msg = let
+  msg' = concat [ "Type class error when compiling `", name, "`. Error "
+                , "returned was: ", msg]
+  in throwError' msg'

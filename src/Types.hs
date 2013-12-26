@@ -65,7 +65,7 @@ instance Render Record where
 
 instance Render TypeRecord where
   render _ (Checked ptype) = render 0 ptype
-  render _ (Declared _type) = render 0 _type
+  render _ (Declared typ)  = render 0 typ
 
 data InferrerState =
   InferrerState { inferSupply :: Name
@@ -258,7 +258,7 @@ defaultInstances = M.fromList
                                ])
   , ("Monoid",      S.fromList [ num
                                , listOf (a [])])
-  , ("Comp",       S.fromList [ num
+  , ("Comp",        S.fromList [ num
                                , str
                                , listOf (a ["Comp"])])
   , ("Applicative", S.fromList [list])
