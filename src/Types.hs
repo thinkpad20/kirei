@@ -14,10 +14,21 @@ module Types ( Type(..)
               , InferrerState(..)
               , TypeRecord(..)
               , TypeCheckError(..)
-              , defaultInstances, defaultTypeMap
-              , renderMap, inherits, getClasses, builtinFuncs
-              , unionAll, type_, (•), sig, num, bool, str, tuple
-              , bare, barev) where
+              , defaultTypeMap
+              , renderMap
+              , inherits
+              , getClasses
+              , builtinFuncs
+              , unionAll
+              , type_
+              , (•)
+              , sig
+              , num
+              , bool
+              , str
+              , tuple
+              , bare
+              , barev) where
 
 import Prelude hiding (foldr)
 import Common
@@ -68,7 +79,7 @@ instance Render TypeRecord where
   render _ (Declared typ)  = render 0 typ
 
 data InferrerState =
-  InferrerState { inferSupply :: Name
+  InferrerState { freshName :: Name
                 , nameStack   :: [Name]
                 , records   :: Record
                 , kinds :: M.Map Name Kind
@@ -80,6 +91,7 @@ infixr 4 :=>
 
 instance Render Type where
   render _ t = case t of
+    TVar [] "(Type)" -> "*"
     TVar [] name -> name
     TVar cNames name -> "(" ++ name ++ " :~ " ++ int ", " cNames ++ ")"
     TConst name -> name
@@ -154,8 +166,17 @@ instance Render TypeMap where
 instance Render (M.Map Name TypeClass) where
   render _ = renderMap
 
+instance Render (S.Set Instance) where
+  render n set = "{" ++ intercalate ", " (render n <$> S.toList set) ++ "}"
+
+instance Render (M.Map Name (S.Set Instance)) where
+  render _ = renderMap
+
 instance Render TypeClass where
-  render _ = show
+  render _ (TC typ kind sigs) = concat $
+    [ "typeclass ", render 0 typ, " : ", render 0 kind, " = "
+    , intercalate " " $ map renderSig sigs]
+    where renderSig (name, sig) = "sig " ++ name ++ " : " ++ render 0 sig ++ ";"
 
 instance Render Polytype where
   render n (Polytype [] t) = render n t
@@ -241,29 +262,3 @@ defaultTypeMap = M.fromList
         numa = TVar ["Num"] "a"
         compa = TVar ["Comp"] "a"
         eqa = TVar ["Eq"] "a"
-
-defaultInstances :: M.Map Name (S.Set Instance)
-defaultInstances = M.fromList
-  [
-    ("Num",         S.fromList [num])
-  , ("Eq",          S.fromList [ num
-                               , str
-                               , bool
-                               , listOf (a ["Eq"])
-                               ])
-  , ("Show",        S.fromList [ num
-                               , str
-                               , bool
-                               , listOf (a ["Show"])
-                               ])
-  , ("Monoid",      S.fromList [ num
-                               , listOf (a [])])
-  , ("Comp",        S.fromList [ num
-                               , str
-                               , listOf (a ["Comp"])])
-  , ("Applicative", S.fromList [list])
-  , ("Functor",     S.fromList [list])
-  ]
-  where list = TConst "[]"
-        listOf = TApply list
-        a classes = TVar classes "a"

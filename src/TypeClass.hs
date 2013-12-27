@@ -1,9 +1,15 @@
 {-# LANGUAGE LambdaCase #-}
-module TypeClass where
+module TypeClass ( makeTypeClass
+                 , makeInstance
+                 , implements
+                 , defaultTypeClasses
+                 , defaultKinds
+                 , defaultInstances) where
 
 import Common
 import Types
 import AST
+import Control.Monad (forM_)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -26,7 +32,7 @@ makeTypeClass name types parsedSigs = case types of
     throwError "Multi-parameter type classes are not yet supported"
   where
     checkUnique name = do
-      get <!> typeClasses <!> M.lookup name >>= \case
+      gets typeClasses <!> M.lookup name >>= \case
         Just _ -> throwError $ "Redeclaration of type class `" ++ name ++ "`"
         Nothing -> return ()
     checkDups sigs = case hasDups (map fst sigs) of
@@ -97,32 +103,6 @@ inferKind (TVar classes varName) sigs = checkKinds =<< mapM find sigs where
         kind:_ ->
           throwError $ "Kind of `" ++ varName ++ "` does not match kind " ++
                         "parent classes, which have kind `" ++ render 0 kind ++ "`"
-
-
-defaultTypeClasses :: M.Map Name TypeClass
-defaultTypeClasses = M.fromList
-  [
-    ("Applicative", TC (TVar ["Functor"] "g") (type_ :=> type_) [pure_, apply_])
-  , ("Functor", TC (TVar [] "f") (type_ :=> type_) [map_])
-  , ("Monad", TC (TVar ["Applicative"] "m") (type_ :=> type_) [return_, bind_])
-  , ("Show", TC (TVar [] "a") type_ [show_])
-  , ("Eq", TC (TVar [] "a") type_ [eq_])
-  , ("Ord", TC (TVar ["Eq"] "a") type_ [succ_])
-  ]
-  where a = TVar [] "a"
-        a' name = TVar [name] "a"
-        b = TVar [] "b"
-        f = TApply (TVar ["Functor"] "f")
-        g = TApply (TVar ["Applicative"] "g")
-        m = TApply (TVar ["Monad"] "m")
-        pure_ = sig "pure" (a :=> g a)
-        apply_ = sig "<*>" (g (a :=> b) :=> g a :=> g b)
-        map_ = sig "map" ((a :=> b) :=> f a :=> f b)
-        eq_ = sig "==" (a' "Eq" :=> a' "Eq" :=> bool)
-        succ_ = sig "succ" (a' "Ord" :=> a' "Ord")
-        return_ = sig "return" (a :=> m a)
-        bind_ = sig ">>=" (m a :=> (a :=> m b) :=> m b)
-        show_ = sig "show" (a' "Show" :=> str)
 
 lookupKindFromTypeClass :: Name -> Inferrer Kind
 lookupKindFromTypeClass name = gets typeClasses <!> M.lookup name >>= \case
@@ -220,7 +200,7 @@ search classNames className = case classNames of
   where
     -- @getParents@ is a wrapper for looking up the class and calling inherits
     getParents :: Name -> Inferrer [Name]
-    getParents className = get <!> typeClasses <!> M.lookup className >>= \case
+    getParents className = gets typeClasses <!> M.lookup className >>= \case
       Nothing -> error $ "FATAL: type class `" ++ className ++ "` wasn't found"
       Just tclass -> return $ inherits tclass
 
@@ -230,8 +210,8 @@ search classNames className = case classNames of
 isInstance :: Type -> Name -> Inferrer Bool
 typ `isInstance` className = do
   --prnt $ "Seeing if " ++ render 0 typ ++ " is an instance of " ++ className
-  get <!> instances <!> M.lookup className >>= \case
-    Nothing -> error $ "Invalid type class " ++ show className
+  gets instances <!> M.lookup className >>= \case
+    Nothing -> error $ "FATAL: Invalid type class " ++ show className
     Just types -> any (== True) <$> mapM (isMatch typ) (S.toList types)
 
 isMatch :: Type -> Type -> Inferrer Bool
@@ -251,6 +231,44 @@ tester `isMatch` stored = do
     (a :=> b, c :=> d) -> isMatch (TApply a b) (TApply c d)
     (a, b) -> return False
 
+-- | Returns an instance if valid. Checks that:
+--    1) the class exists
+--    2) the kind of the type provided is the same as that class
+--    3) an instance doesn't already exist for that type
+--    4) the instance method signatures match
+makeInstance :: Name -> Type -> M.Map Name Type -> Inferrer Instance
+makeInstance className typ funcs = do
+  -- make sure class exists
+  (TC _ kind sigs) <- M.lookup className <$> gets typeClasses >>= \case
+    Nothing -> throwError $ "Type class `" ++ className ++ "` does not exist"
+    Just tclass -> return tclass
+  -- get kind of type
+  thisKind <- checkKind typ
+  -- make sure equal
+  if kind /= thisKind
+  then throwError' [ "Kind mismatch: `", className, "` expects kind `"
+                   , render 0 kind, "` but type `"
+                   , render 0 typ, "` has kind `", render 0 thisKind, "`"]
+  -- check if already implements
+  else typ `implements` [className] >>= \case
+    -- already has an instance
+    True -> throwError' [ "An instance for `", className, "` already "
+                        , "exists for `", render 0 typ, "`"]
+    -- new instance, need to check if method sigs match
+    False -> do
+      forM_ sigs checkSig
+      return typ
+  where
+    checkSig (name, typ') = case M.lookup name funcs of
+      Nothing -> throwError' ["Method `", name, "` is not implemented"]
+      Just typ -> typ `isMatch` typ' >>= \case
+        False -> throwError' [ "Type mismatch in method `", name
+                             , "`: method should have type `"
+                             , render 0 typ', "` but instead it has "
+                             , "type `", render 0 typ, "`"]
+        True -> return ()
+
+throwError' = throwError . concat
 
 defaultKinds = M.fromList
   [
@@ -259,3 +277,53 @@ defaultKinds = M.fromList
   , ("Bool", type_)
   , ("[]", type_ :=> type_)
   ]
+
+defaultTypeClasses :: M.Map Name TypeClass
+defaultTypeClasses = M.fromList
+  [
+    ("Applicative", TC (TVar ["Functor"] "f") (type_ :=> type_) [pure, apply])
+  , ("Functor", TC (TVar [] "f") (type_ :=> type_) [map])
+  , ("Monad", TC (TVar ["Applicative"] "m") (type_ :=> type_) [return, bind])
+  , ("Show", TC (TVar [] "a") type_ [show])
+  , ("Eq", TC (TVar [] "a") type_ [eq])
+  , ("Ord", TC (TVar ["Eq"] "a") type_ [succ])
+  ]
+  where a = TVar [] "a"
+        a' name = TVar [name] "a"
+        b = TVar [] "b"
+        f = TApply (TVar [] "f")
+        m = TApply (TVar ["Monad"] "m")
+        pure = sig "pure" (a :=> f a)
+        apply = sig "<*>" (f (a :=> b) :=> f a :=> f b)
+        map = sig "map" ((a :=> b) :=> f a :=> f b)
+        eq = sig "==" (a :=> a :=> bool)
+        succ = sig "succ" (a :=> a)
+        return = sig "return" (a :=> m a)
+        bind = sig ">>=" (m a :=> (a :=> m b) :=> m b)
+        show = sig "show" (a :=> str)
+
+defaultInstances :: M.Map Name (S.Set Instance)
+defaultInstances = M.fromList
+  [
+    ("Num",         S.fromList [num])
+  , ("Eq",          S.fromList [ num
+                               , str
+                               , bool
+                               , listOf (a ["Eq"])
+                               ])
+  , ("Show",        S.fromList [ num
+                               {-, str-}
+                               , bool
+                               , listOf (a ["Show"])
+                               ])
+  , ("Monoid",      S.fromList [ num
+                               , listOf (a [])])
+  , ("Comp",        S.fromList [ num
+                               , str
+                               , listOf (a ["Comp"])])
+  , ("Applicative", S.fromList [list])
+  , ("Functor",     S.fromList [list])
+  ]
+  where list = TConst "[]"
+        listOf = TApply list
+        a classes = TVar classes "a"

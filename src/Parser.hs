@@ -55,7 +55,6 @@ precedences = M.fromList [
 pBinary :: Parser Expr
 pBinary = do
   precs <- getPrecedences
-  --prnt $ "Parsing a binary, precedences are " ++ show precs
   getPrecedences >>= pFrom 0 where
     -- This will effectively loop from n = 0 through n = 9, each time attempting
     -- all of the parsers at the level
@@ -374,7 +373,7 @@ pTypeClass :: Parser Expr
 pTypeClass = TypeClass <$
                keyword "typeclass" <*> pTypeName <*> many1 pTTerm <*
                keysym "=" <*> many1 pSig' <* keysym ";" <*> optionMaybe pExprs
-  -- | @pSig'@ is like pSig but only parses single expressions, not chains.
+  -- @pSig'@ is like @pSig@ but only parses single expressions, not chains.
   where pSig' = do name <- keyword "sig" >> (pVariable <|> pSymbol)
                    typ <- keysym ":" *> pType <* keysym ";"
                    defaultFixity name
@@ -385,7 +384,7 @@ pInstance = Instance <$
               keyword "instance" <*> pTypeName <*> pTTerm <* keysym "=" <*>
               many1 pLet' <* keysym ";" <*> optionMaybe pExprs
   where
-    -- | Similar to above, @pLet'@ is a simplified @pLet@
+    -- Similar to above, @pLet'@ is a simplified @pLet@
     pLet' = do
       name  <- keyword "let" *> (pVariable <|> pSymbol)
       patterns <- many pPatternTerm

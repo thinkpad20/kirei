@@ -11,6 +11,7 @@ import qualified Data.Set as S
 
 import Control.Applicative ((<$>), (<|>))
 import Data.List (intercalate)
+import Control.Monad (forM)
 import Parser
 import Common
 import AST
@@ -18,14 +19,16 @@ import Prelude hiding (foldr)
 import Types
 import TypeClass
 
+-- Utility/wrapper functions
+
 runInferrer :: Inferrer a -> IO (Either TypeCheckError a, InferrerState)
-runInferrer t = runStateT (runErrorT t) initialState
-  where initialState = InferrerState { inferSupply = "a0"
-                                      , nameStack = ["(root)"]
-                                      , records = mempty
-                                      , kinds = defaultKinds
-                                      , typeClasses = defaultTypeClasses
-                                      , instances = defaultInstances }
+runInferrer inferrer = flip runStateT initialState $ runErrorT inferrer
+  where initialState = InferrerState { freshName = "a0"
+                                     , nameStack   = ["(root)"]
+                                     , records     = mempty
+                                     , kinds       = defaultKinds
+                                     , typeClasses = defaultTypeClasses
+                                     , instances   = defaultInstances }
 
 typeInference :: M.Map Name Polytype -> Expr -> Inferrer Type
 typeInference env e = uncurry applySub <$> infer env e
@@ -39,31 +42,155 @@ test s = do
     Right t  -> putStrLn $ "Expr: " ++ render 0 expr ++
                            "\nType: " ++ render 0 t ++
                            "\nEnv:  " ++ render 0 (records env) ++
-                           "\nTypeClasses: " ++ render 0 (typeClasses env)
+                           "\nTypeClasses: " ++ render 0 (typeClasses env) ++
+                           "\nInstances: " ++ render 0 (instances env)
 
-generalize :: TypeMap -> Type -> Polytype
-generalize env t = Polytype vars' t'
+-- Main methods
+
+-- | @infer@ is the main type inferrence function
+infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
+infer env expr = case expr of
+  String _ -> only str
+  Number _ -> only num
+  Bool _ -> only bool
+  Tuple exprs -> do
+    -- subsAndTypes is a list of ({Name: Type}, Type)
+    subsAndTypes <- mapM (infer env) exprs
+    -- combine all the subs (fst), and make a type tuple of all the types (snd)
+    return (mconcat $ map fst subsAndTypes, TTuple $ map snd subsAndTypes)
+  Var name -> case M.lookup name env of
+    -- If it's in the env, we've already type checked it. Instantiate it now
+    Just polytype -> only =<< instantiate polytype
+    -- If it's not in the env, it might just be declared
+    Nothing -> nsLookup name >>= \case
+      -- If it's declared, we'll trust it but we need to work some magic on it
+      Just (Declared typ) -> do
+        -- Generalizing will make a polytype with fresh type variables
+        let generalized = generalize mempty typ
+        -- We then instantiate, which turns it back into a Type
+        typ' <- instantiate generalized
+        -- and then we can return it with no substitutions
+        only typ'
+      -- if it's a checked type it should be in the env, but it's ok...
+      Just (Checked polytype) -> only =<< instantiate polytype
+      -- if it hasn't been declared, that's definitely an error
+      Nothing -> inferError $ "Unknown variable: " ++ name
+  TypeName n -> infer env (Var n)
+  Lambda pattern body -> do
+    (vars, paramT) <- inferPattern env pattern
+    let env' = M.union (bare <$> vars) env
+    (subs, bodyT) <- infer env' body
+    return (subs, applySub subs paramT :=> bodyT)
+  Apply func arg -> do
+    resultT <- newvar
+    (funcS, funcT) <- infer env func
+    (argS, argT) <- infer (applySub funcS env) arg
+    unifyS <- unify (applySub argS funcT) (argT :=> resultT)
+                `catchError` unificationError expr funcT argT
+    return (unifyS • argS • funcS, applySub unifyS resultT)
+  Let name expr' next -> do
+    -- create a new variable for the name (or use existing)
+    newT <- newVarForLet name
+    -- create a new environment with that mapping added
+    let env1 = M.insert name (bare newT) env
+    -- infer expr with that environment
+    (exprSubs, exprT) <- pushNS name >> infer env1 expr' >>== popNS
+    let exprT' = applySub exprSubs exprT
+    subs <- unify newT exprT'
+    -- generalize the type with respect to previous env
+    let genT = generalize (applySub (subs • exprSubs) env) exprT'
+    -- make a record of this type
+    register name (Checked genT)
+    case next of
+      Nothing -> return (exprSubs, tuple [])
+      Just next -> do
+        -- create a new environment with that generalized type
+        let env2 = env ! M.insert name genT ! applySub exprSubs
+        -- apply whatever substitutions were produced from evaluating `expr`,
+        -- infer the next guy, and compose their substitutions
+        (nextSubs, nextT) <- infer env2 next
+        return (exprSubs • nextSubs, nextT)
+  Sig name typ next -> nsLookup name >>= \case
+    Nothing -> register name (Declared typ) >> handle next
+    Just _ -> inferError $ "Redeclaration of variable `" ++ name ++ "`"
+  TypeClass name types sigs next -> do
+    tclass <- makeTypeClass name types sigs `catchError` typeClassError name
+    addTypeClass name tclass
+    handle next
+  Instance tclass typ exprs next -> do
+    sigs <- M.fromList <$> forM exprs getNameAndType
+    inst <- makeInstance tclass typ sigs `catchError` instanceError tclass typ
+    addInstance tclass typ
+    handle next
+  otherwise -> inferError $ "Unhandleable expression " ++ prettyExpr expr
   where
+    only t = return (mempty, t)
+    newvar = newTypeVar []
+    handle next = case next of
+      Nothing -> only (tuple [])
+      Just expr -> infer env expr
+    addTypeClass name _class = modify $
+      \s -> s { typeClasses = M.insert name _class (typeClasses s) }
+    addInstance tclass typ = do
+      instanceSet <- gets instances <!> M.lookup tclass >>= \case
+        Nothing  -> return $ S.singleton typ
+        Just set -> return $ S.insert typ set
+      newInstances <- M.insert tclass instanceSet <$> gets instances
+      modify (\s -> s { instances = newInstances })
+    newVarForLet name = nsLookup name >>= \case
+      Nothing -> newvar
+      Just (Declared t) -> return t
+      Just (Checked t) ->
+        -- don't allow duplicate definitions
+        inferError $ "Redefinition of `" ++ name ++ "`, which had " ++
+        "previously been defined in this scope (with type `" ++
+        render 0 t ++ "`)"
+    getNameAndType expr = case expr of
+      Let name expr _ -> do
+        (subs, typ) <- infer mempty expr
+        return (name, applySub subs typ)
+      otherwise -> error "FATAL: Non-let expression in instance declaration"
+
+-- | @generalize@ creates a polytype from a type, by seeing which variables
+-- are enclosed by that type and putting them in the variable list
+generalize :: TypeMap -> Type -> Polytype
+generalize env t =
+  let
     -- grab only the variables that are bound in the scope of this type
     vars = S.toList (free t S.\\ free env)
     -- replace them with letters of the alphabet
     vars' = snd <$> zip vars (pure <$> ['a'..])
-    -- collect all of the type classes and construct TVars
+    -- collect all of the variables' type classes and construct TVars
     types = map (\v -> TVar (getClasses v t) v) vars
     -- this function will make a tuple mapping the old name to the new
     newType (TVar classes name) new = (name, TVar classes [new])
-    -- create the substitutions
+    -- create a substitution map from the old names to the new types
     subs = M.fromList $ zipWith newType types ['a'..]
     -- apply the substitutions to the internal type
     t' = applySub subs t
+  -- return a polytype using the new vars and the new type
+  in Polytype vars' t'
 
--- | Get a fresh new type variable to use
+-- | @instantiate@ is the reverse of generalize; it takes a polytype and
+-- creates a normal type by replacing all of the bound variables with
+-- fresh variables
+instantiate :: Polytype -> Inferrer Type
+instantiate (Polytype vars typ) = do
+  newVars <- mapM (\var -> newTypeVar (getClasses var typ)) vars
+  -- make a substitution mapping all of the variables in the scheme
+  -- to new variables we just generated
+  let subs = M.fromList (zip vars newVars)
+  -- apply those subs to the type and return it
+  return $ applySub subs typ
+
+-- | @newTypeVar@ takes a list of type classes and makes a fresh new type
+-- variable with those type classes attachec
 newTypeVar :: [Name] -> Inferrer Type
 newTypeVar classes = do
   -- get the current state
-  var <- inferSupply <$> get
-  -- increment the inferSupply
-  modify $ \s -> s { inferSupply = next var }
+  var <- gets freshName
+  -- increment the freshName
+  modify $ \s -> s { freshName = next var }
   -- wrap it in a type variable and return it
   return $ TVar classes var
   where
@@ -72,29 +199,22 @@ newTypeVar classes = do
       else if (head name) < 'z' then (succ $ head name) : "0"
       else map (\_ -> 'a') name ++ "0"
 
-instantiate :: Polytype -> Inferrer Type
-instantiate s@(Polytype vars t) = do
-  newVars <- mapM (\var -> getClasses var t ! newTypeVar) vars
-  -- make a substitution mapping all of the variables in the scheme
-  -- to new variables we just generated
-  let s = M.fromList (zip vars newVars)
-      res = applySub s t
-  return res
-
+-- | @unify@ creates substitution map which is the set of substitutions
+-- sufficient to make the two type arguments equivalent. For example, if
+-- we're unifying @a@ and @Number@, we'll have a mapping @a => Number@.
+-- If the two types are incompatible, or if there is a cycle in types (for
+-- example, mapping @a@ to @b -> a@), an error is thrown.
 unify :: Type -> Type -> Inferrer Substitutions
 a `unify` b = do
-  --prnt $ "Unify called with " ++ render 0 a ++ ", " ++ render 0 b
   case (a,b) of
     (t, TVar classNames u) -> unify b a
     (TVar classNames u, t) -> do
-      --prnt $ "seeing if " ++ render 0 t ++ " implements " ++ show classNames
       res <- t `implements` classNames
       case res of
         True -> u `bind` t
         False -> throwError $
           concat [ "Type class unification error: `", render 0 t
-                 , "` does not implement "
-                 , case classNames of
+                 , "` does not implement " , case classNames of
                     [name] -> "type class " ++ name
                     names -> "type classes " ++ intercalate ", " names]
     (TConst n, TConst n') | n == n' -> return mempty
@@ -113,14 +233,6 @@ a `unify` b = do
       then return mempty
       else if not $ name `S.member` free typ
            then return (M.singleton name typ)
-           -- what does this error mean? well let's say we're binding `a` to
-           -- `(b :=> a)`. Well in the type `(b :=> a)`, one of the free variables
-           -- is the type `a`. This constitutes a circular type definition, since
-           -- if we tried to apply the substitution, we'd be back to where we
-           -- started, with the type `a` still hanging around. So an occurs check
-           -- here is checking if this substitution is meaningful or not, which
-           -- has the dual meaning of checking if we're trying to construct the
-           -- infinite type.
            else throwError $ concat [ "Type cycle detected when attempting "
                                      , "to unify `", render 0 a, "` with `"
                                      , render 0 b, "`: ", name, "` is a free "
@@ -133,7 +245,7 @@ getFull name = getNS <!> (++ "." ++ name)
 nsLookup :: Name -> Inferrer (Maybe TypeRecord)
 nsLookup name = do
   fullname <- getFull name
-  get <!> records <!> M.lookup fullname
+  gets records <!> M.lookup fullname
 
 register :: Name -> TypeRecord -> Inferrer ()
 register name rec = do
@@ -147,100 +259,11 @@ popNS :: Inferrer ()
 popNS = modify $ \s -> s {nameStack = tail (nameStack s)}
 
 getNS :: Inferrer Name
-getNS = get <!> nameStack <!> reverse <!> intercalate "."
+getNS = gets nameStack <!> reverse <!> intercalate "."
 
-infer :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
-infer env expr = case expr of
-  String _ -> only str
-  Number _ -> only num
-  Bool _ -> only bool
-  Tuple exprs -> do
-    -- subsAndTypes is a list of ({Name: Type}, Type)
-    subsAndTypes <- mapM (infer env) exprs
-    -- collect all the subs (fst), and make a type tuple of all the types (snd)
-    return (mconcat $ map fst subsAndTypes, TTuple $ map snd subsAndTypes)
-  -- symbols are same as variables in this context
-  Symbol s -> infer env (Var s)
-  Var name -> case M.lookup name env of
-    -- if it's not in the env, it might just be declared
-    Nothing -> nsLookup name >>= \case
-      -- if it hasn't been declared, that's definitely an error
-      Nothing -> throwError' $ "Unknown variable: " ++ name
-      -- if it's a checked type it should be in the env, but just in case...
-      Just (Checked polytype) -> only =<< instantiate polytype
-      -- if it's declared, we'll trust it but we need to work some magic on it
-      Just (Declared typ) -> do
-        -- generalizing will make a polytype with fresh type variables
-        let generalized = generalize mempty typ
-        -- we then instantiate, which turns it back into a Type
-        typ' <- instantiate generalized
-        -- and then we can return it with no substitutions
-        only typ'
-    Just polytype -> only =<< instantiate polytype
-  TypeName n -> infer env (Var n)
-  Lambda pattern body -> do
-    (vars, paramT) <- inferPattern env pattern
-    let env' = M.union (bare <$> vars) env
-    (subs, bodyT) <- infer env' body
-    return (subs, applySub subs paramT :=> bodyT)
-  Apply func arg -> do
-    resultT <- newvar
-    (funcS, funcT) <- infer env func
-    (argS, argT) <- infer (applySub funcS env) arg
-    unifyS <- unify (applySub argS funcT) (argT :=> resultT)
-                `catchError` unificationError expr funcT argT
-    return (unifyS • argS • funcS, applySub unifyS resultT)
-  Let name expr' next -> do
-    -- create a new variable for the name
-    newT <- nsLookup name >>= \case
-      Nothing -> newvar
-      Just (Declared t) -> return t
-      Just (Checked t) ->
-        -- don't allow duplicate definitions
-        throwError' $ "Redefinition of `" ++ name ++ "`, which had " ++
-        "previously been defined in this scope (with type `" ++
-        render 0 t ++ "`)"
-    -- create a new environment with that mapping added
-    let env1 = M.insert name (bare newT) env
-    -- infer expr with that environment
-    (exprSubs, exprT) <- pushNS name >> infer env1 expr' >>== popNS
-    let exprT' = applySub exprSubs exprT
-    subs <- unify newT exprT'
-    -- generalize the type with respect to previous env
-    let genT = generalize (applySub (subs • exprSubs) env) exprT'
-    -- create a new environment with that generalized type
-        env2 = applySub exprSubs $ M.insert name genT env
-    -- make a record of this type
-    register name (Checked genT)
-    case next of
-      Nothing -> return (exprSubs, tuple [])
-      Just next -> do
-        -- apply whatever substitutions were produced from evaluating `expr`,
-        -- infer the next guy, and compose their substitutions
-        (nextSubs, nextT) <- infer env2 next
-        return (exprSubs • nextSubs, nextT)
-  Sig name typ next -> do
-    nsLookup name >>= \case
-      Nothing -> register name (Declared typ) >> handle next
-      Just _ -> throwError' $ "Redeclaration of variable `" ++ name ++ "`"
-  TypeClass name types sigs next -> do
-    tclass <- makeTypeClass name types sigs `catchError` typeClassError name
-    addTypeClass name tclass
-    handle next
-  otherwise -> throwError' $ "Unhandleable expression " ++ prettyExpr expr
-  where
-    only t = return (mempty, t)
-    newvar = newTypeVar []
-    handle next = case next of
-      Nothing -> only (tuple [])
-      Just expr -> infer env expr
-    addTypeClass name _class = modify $
-      \s -> s { typeClasses = M.insert name _class (typeClasses s) }
-
-throwError' message = do
-  ns <- getNS
-  throwError (message ++ "\nOccurred when type checking " ++ ns)
-
+-- | @inferPattern@ is a simplified version of @infer@ which works for
+-- patterns, which are a subset of expressions (plus the @Placeholder@).
+-- any variables encountered are considered new.
 inferPattern :: TypeMap -> Expr -> Inferrer (Substitutions, Type)
 inferPattern env pat = case pat of
   Var v -> do
@@ -258,10 +281,11 @@ inferPattern env pat = case pat of
     subs3 <- unify funcT (argT :=> returnT)
               `catchError` unificationError pat funcT argT
     return (subs3 • subs2 • subs1, applySub subs3 returnT)
-  Placeholder -> newvar >>= only
-  Number _ -> only num
-  String _ -> only str
-  Bool   _ -> only bool
+  Placeholder -> only =<< newvar
+  Number _    -> only num
+  String _    -> only str
+  Bool   _    -> only bool
+  otherwise -> error $ "FATAL: invalid pattern " ++ show pat
   where only t = return (mempty, t)
         newvar = newTypeVar []
 
@@ -283,4 +307,14 @@ typeClassError :: Name -> TypeCheckError -> Inferrer a
 typeClassError name msg = let
   msg' = concat [ "Type class error when compiling `", name, "`. Error "
                 , "returned was: ", msg]
-  in throwError' msg'
+  in inferError msg'
+
+inferError :: TypeCheckError -> Inferrer a
+inferError message = do
+  ns <- getNS
+  throwError (message ++ "\nOccurred when type checking " ++ ns)
+
+instanceError :: Name -> Type -> TypeCheckError -> Inferrer a
+instanceError name typ msg = throwError $
+  concat [ "Error attempting to make `", render 0 typ, "` an instance of `"
+         , name, "`. Error returned was: ", msg]
