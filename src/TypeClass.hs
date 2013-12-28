@@ -1,6 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module TypeClass ( makeTypeClass
                  , makeInstance
+                 , isMatch
                  , implements
                  , defaultTypeClasses
                  , defaultKinds
@@ -9,7 +10,6 @@ module TypeClass ( makeTypeClass
 import Common
 import Types
 import AST
-import Control.Monad (forM_)
 import qualified Data.Map as M
 import qualified Data.Set as S
 
@@ -55,7 +55,7 @@ inferKind (TVar classes varName) sigs = checkKinds =<< mapM find sigs where
     f :: Type -> Either String [Kind]
     f typ = case typ of
       -- if it's this variable, return a single type
-      TVar _ name | name == varName -> return [type_]
+      TVar _ name | name == varName -> return [Type]
       TApply typeFunc typeArg -> do
         funcKind <- f typeFunc
         argKind <- f typeArg
@@ -65,7 +65,7 @@ inferKind (TVar classes varName) sigs = checkKinds =<< mapM find sigs where
           -- kind found on right hand side of application
           ([], kind : _) -> return [kind]
           -- kind found on left-hand side of application (e.g. @f a@ in fmap)
-          (kind : _, []) -> return [kind :=> type_]
+          (kind : _, []) -> return [kind :-> Type]
           -- error, e.g. if we tried to make a signature @f f@
           (kinds, kinds') -> Left $ "Infinite kind, type variable `" ++
                                     varName ++ "` is applied to itself"
@@ -137,14 +137,14 @@ checkKind :: Type -> Inferrer Kind
 checkKind typ = case typ of
   TConst name -> lookupKind name
   TVar classes name -> mapM lookupKindFromTypeClass classes >>= \case
-    [] -> return type_
+    [] -> return Type
     k:kinds -> if all (== k) kinds then return k
                else throwError $ "Mismatching kinds in parent classes of "
                                  ++ "type variable `" ++ name ++ "`"
   TApply left right -> do
     leftKind <- checkKind left
     case leftKind of
-      paramK :=> resultK -> do
+      paramK :-> resultK -> do
         argK <- checkKind right
         if argK == paramK then return resultK
         else throwError kindMismatchError
@@ -158,18 +158,17 @@ checkKind typ = case typ of
                                        , "either unknown or is a single `Type`"]
   TTuple types -> do
     kinds <- mapM checkKind types
-    if all isSingleKind kinds then return type_
+    if all isSingleKind kinds then return Type
     else throwError $ "All types in a type tuple must be single kinds, " ++
                       "test failed in type tuple " ++ render 0 typ
   t1 :=> t2 -> do
     k1 <- checkKind t1
     k2 <- checkKind t2
-    if isSingleKind k1 && isSingleKind k2 then return type_
-    else throwError $ "Functions must map from single kinds to single kinds, " ++
+    case (k1, k2) of
+      (Type, Type) -> return Type
+      otherwise ->
+        throwError $ "Functions must map from single kinds to single kinds, " ++
                       "but type " ++ render 0 typ ++ " does not"
-
-isSingleKind :: Type -> Bool
-isSingleKind typ = typ == type_
 
 -- | @implements@ checks if the list of type classes is implemented by
 -- the type given.
@@ -272,21 +271,21 @@ throwError' = throwError . concat
 
 defaultKinds = M.fromList
   [
-    ("String", type_)
-  , ("Number", type_)
-  , ("Bool", type_)
-  , ("[]", type_ :=> type_)
+    ("String", Type)
+  , ("Number", Type)
+  , ("Bool", Type)
+  , ("[]", Type :-> Type)
   ]
 
 defaultTypeClasses :: M.Map Name TypeClass
 defaultTypeClasses = M.fromList
   [
-    ("Applicative", TC (TVar ["Functor"] "f") (type_ :=> type_) [pure, apply])
-  , ("Functor", TC (TVar [] "f") (type_ :=> type_) [map])
-  , ("Monad", TC (TVar ["Applicative"] "m") (type_ :=> type_) [return, bind])
-  , ("Show", TC (TVar [] "a") type_ [show])
-  , ("Eq", TC (TVar [] "a") type_ [eq])
-  , ("Ord", TC (TVar ["Eq"] "a") type_ [succ])
+    ("Applicative", TC (TVar ["Functor"] "f") (Type :-> Type) [pure, apply])
+  , ("Functor", TC (TVar [] "f") (Type :-> Type) [map])
+  , ("Monad", TC (TVar ["Applicative"] "m") (Type :-> Type) [return, bind])
+  , ("Show", TC (TVar [] "a") Type [show])
+  , ("Eq", TC (TVar [] "a") Type [eq])
+  , ("Ord", TC (TVar ["Eq"] "a") Type [succ])
   ]
   where a = TVar [] "a"
         a' name = TVar [name] "a"

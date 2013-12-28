@@ -1,5 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
-module Parser (grab, isSymbol) where
+module Parser (grab, grab', isSymbol, pType, pTTerm) where
 
 import Text.Parsec hiding (parse)
 import Control.Applicative hiding ((<|>), many)
@@ -408,8 +408,10 @@ pExprs = chainl1 pExpr (schar ',' *> pure Comma)
 parse :: Parser a -> UserState -> Source -> IO (Either ParseError a)
 parse p u s = runParserT p u "" s
 
-grab' :: Parser a -> Source -> IO (Either ParseError a)
-grab' parser = parse (parser <* eof) precedences
+grab' :: Parser a -> Source -> IO a
+grab' parser source = parse (parser <* eof) precedences source >>= \case
+  Left err -> error $ "Parse error: " ++ show err
+  Right expr -> return expr
 
 grab :: String -> IO Expr
 grab s = parse parseIt precedences s >>= \case

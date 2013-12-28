@@ -25,7 +25,9 @@ module Common ( Name
               , lift
               , zipWithM
               , (<>)
-              , (>>==)) where
+              , (>>==)
+              , forM
+              , forM_) where
 
 import Prelude hiding (foldl', foldr)
 import Data.Foldable (foldl', foldr)
@@ -35,6 +37,7 @@ import Data.Monoid
 import qualified Data.Set as S
 import Control.Monad.Error
 import Control.Monad.State
+import Control.Monad
 
 (~>) = flip (.)
 infixr 9 ~>

@@ -18,8 +18,7 @@ type Matches = [(Expr, Expr)]
 data Constructor = Constructor Name [Type] deriving (Show, Ord, Eq)
 
 data Expr =
-  Bool Bool
-  | Number Double
+  Number Double
   | String String
   | Symbol Name
   | TypeName Name
@@ -55,7 +54,6 @@ instance Render Constructor where
 
 prettyExpr :: Expr -> String
 prettyExpr e = case e of
-  Bool b -> show b
   Number n -> if isInt n then show $ floor n else show n
   String s -> show s
   Symbol op -> "(" ++ op ++ ")"

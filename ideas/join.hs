@@ -1,6 +1,1 @@
-import Data.Monoid
-
-joinBy sep list = case list of
-  [] -> []
-  [s] -> s
-  s:ss -> s <> sep <> joinBy sep ss
+data Show a => Foo a = Bar a Int | Baz

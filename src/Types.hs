@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE TypeSynonymInstances, OverlappingInstances #-}
 module Types ( Type(..)
-              , Kind
+              , Kind(..)
               , TypeClass(..)
               , Polytype(..)
               , TypeMap(..)
@@ -14,13 +14,11 @@ module Types ( Type(..)
               , InferrerState(..)
               , TypeRecord(..)
               , TypeCheckError(..)
-              , defaultTypeMap
+              , defaultRecords
               , renderMap
               , inherits
               , getClasses
               , builtinFuncs
-              , unionAll
-              , type_
               , (•)
               , sig
               , num
@@ -28,6 +26,8 @@ module Types ( Type(..)
               , str
               , tuple
               , bare
+              , newTypeVar
+              , isSingleKind
               , barev) where
 
 import Prelude hiding (foldr)
@@ -39,11 +39,11 @@ import qualified Data.Set as S
 ----  Data types for Hindley-Milner Type Checker   ----
 -------------------------------------------------------
 data Type =
-  TVar [Name] Name     -- First arg is class name(s)
-  | TConst Name      -- e.g. `Number`
-  | TApply Type Type -- e.g. `Maybe a` or `State [Number] a`
-  | TTuple [Type] -- e.g. `(a, Number)`
-  | Type :=> Type  -- functions
+  TVar [Name] Name    -- First arg is class name(s)
+  | TConst Name       -- e.g. `Number`
+  | TApply Type Type  -- e.g. `Maybe a` or `State [Number] a`
+  | TTuple [Type]     -- e.g. `(a, Number)`
+  | Type :=> Type     -- functions
   deriving (Show, Eq, Ord)
 
 data Polytype = Polytype [Name] Type deriving (Show, Eq, Ord)
@@ -52,7 +52,10 @@ type TypeMap = M.Map Name Polytype
 
 type Substitutions = M.Map String Type
 
-type Kind = Type
+data Kind = Type
+          | KVar Name
+          | Kind :-> Kind
+          deriving (Show, Ord, Eq)
 
 data TypeClass = TC Type Kind [Sig] deriving (Show)
 
@@ -76,22 +79,22 @@ instance Render Record where
 
 instance Render TypeRecord where
   render _ (Checked ptype) = render 0 ptype
-  render _ (Declared typ)  = render 0 typ
+  render _ (Declared typ)  = render 0 typ ++ " (declared)"
 
 data InferrerState =
-  InferrerState { freshName :: Name
+  InferrerState { freshName   :: Name
                 , nameStack   :: [Name]
-                , records   :: Record
-                , kinds :: M.Map Name Kind
+                , records     :: Record
+                , kinds       :: M.Map Name Kind
                 , typeClasses :: M.Map Name TypeClass
-                , instances :: M.Map Name (S.Set Type)
+                , instances   :: M.Map Name (S.Set Type)
                 } deriving (Show)
 
 infixr 4 :=>
+infixr 4 :->
 
 instance Render Type where
   render _ t = case t of
-    TVar [] "(Type)" -> "*"
     TVar [] name -> name
     TVar cNames name -> "(" ++ name ++ " :~ " ++ int ", " cNames ++ ")"
     TConst name -> name
@@ -104,6 +107,14 @@ instance Render Type where
     t1 :=> t2 -> r t1 ++ " -> " ++ r t2
     where r = render 0
           int = intercalate
+
+instance Render Kind where
+  render _ t = case t of
+    Type -> "Type"
+    KVar name -> name
+    k1@(a :-> b) :-> k2 -> "(" ++ r k1 ++ ")" ++ " -> " ++ r k2
+    k1 :-> k2 -> r k1 ++ " -> " ++ r k2
+    where r = render 0
 
 -- | The Types class describes objects which can contain free type
 -- variables, i.e. those which are not determined by their containers,
@@ -166,6 +177,9 @@ instance Render TypeMap where
 instance Render (M.Map Name TypeClass) where
   render _ = renderMap
 
+instance Render (M.Map Name Kind) where
+  render _ = renderMap
+
 instance Render (S.Set Instance) where
   render n set = "{" ++ intercalate ", " (render n <$> S.toList set) ++ "}"
 
@@ -199,9 +213,6 @@ bool = TConst "Bool"
 tuple :: [Type] -> Type
 tuple = TTuple
 
-type_ :: Kind
-type_ = TVar [] "(Type)"
-
 sig :: Name -> Type -> Sig
 sig name typ = (name, typ)
 
@@ -210,7 +221,7 @@ renderMap :: Render a => M.Map Name a -> String
 renderMap m = rndr pairs
   where rndr [] = "{}"
         rndr [(key, val)] = "{" ++ key ++ " : " ++ render 0 val ++ "}"
-        rndr pairs = "{\n" ++ (intercalate ",\n" $ map toS pairs) ++ "\n}"
+        rndr pairs = "{\n" ++ (intercalate "\n" $ map toS pairs) ++ "\n}"
         pairs = M.toList m ! filter isNotBuiltIn
         toS (key, val) = "   " ++ key ++ " : " ++ render 0 val
         isNotBuiltIn = (\(name, _) -> not $ name `S.member` builtinFuncs)
@@ -222,14 +233,17 @@ inherits :: TypeClass -> [Name]
 inherits (TC (TVar inherits' _) _ _) = inherits'
 inherits tc = error $ "FATAL: malformed type class `" ++ show tc ++ "`"
 
+isSingleKind :: Kind -> Bool
+isSingleKind Type = True
+isSingleKind _    = False
+
+-- Default/initial versions of type checking data
 builtinFuncs = S.fromList [  "+", "-", "*", "/", ">"
                            , "<", ">=", "<=", "=="
                            , "!=", "::", "[]", "(if)", "(or)"
                            , "(error)", "(fail)", "(range)"]
 
--- Default/initial versions of type checking data
-
-defaultTypeMap = M.fromList
+defaultRecords = Checked <$> M.fromList
   [
     ("+", witha $ numa :=> numa :=> numa)
   , ("-", witha $ numa :=> numa :=> numa)
@@ -250,6 +264,8 @@ defaultTypeMap = M.fromList
   , ("(range)", witha $ a :=> a :=> listT a)
   , ("show", witha $ a' ["Show"] :=> str)
   , ("map", withab $ (a :=> b) :=> f a :=> f b)
+  , ("True", bare bool)
+  , ("False", bare bool)
   ]
   where witha = Polytype ["a"]
         withab = Polytype ["a", "b"]
@@ -262,3 +278,19 @@ defaultTypeMap = M.fromList
         numa = TVar ["Num"] "a"
         compa = TVar ["Comp"] "a"
         eqa = TVar ["Eq"] "a"
+
+-- | @newTypeVar@ takes a list of type classes and makes a fresh new type
+-- variable with those type classes attachec
+newTypeVar :: [Name] -> Inferrer Type
+newTypeVar classes = do
+  -- get the current state
+  var <- gets freshName
+  -- increment the freshName
+  modify $ \s -> s { freshName = next var }
+  -- wrap it in a type variable and return it
+  return $ TVar classes var
+  where
+    next name = let (c:cs) = reverse name in
+      if c < '9' then reverse $ succ c : cs
+      else if (head name) < 'z' then (succ $ head name) : "0"
+      else map (\_ -> 'a') name ++ "0"
