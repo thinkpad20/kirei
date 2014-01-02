@@ -42,12 +42,14 @@ typeInference env e = uncurry applySub <$> infer env e
 test :: String -> IO ()
 test s = do
   expr <- grab s
-  (res, env) <- runInferrer (typeInference mempty (desugar expr))
+  let desugared = desugar expr
+  (res, env) <- runInferrer (typeInference mempty desugared)
   case res of
     Left err -> putStrLn $ "Type check error: " ++ err ++ "\n"
     Right t  -> putStrLn $ "Expr: " ++ render 0 expr ++
+                           "\nDesugared: " ++ render 0 desugared ++
                            "\nType: " ++ render 0 t ++
-                           "\nRecord:  " ++ render 0 (records env) ++
+                           "\nRecords:  " ++ render 0 (records env) ++
                            "\nTypeClasses: " ++ render 0 (typeClasses env) ++
                            "\nInstances: " ++ render 0 (instances env) ++
                            "\nKinds: " ++ render 0 (kinds env)
@@ -65,6 +67,7 @@ infer env expr = do
       subsAndTypes <- mapM (infer env) exprs
       -- combine all the subs (fst), and make a type tuple of all the types (snd)
       return (mconcat $ map fst subsAndTypes, TTuple $ map snd subsAndTypes)
+    Symbol name -> infer env (Var name)
     Var name -> case M.lookup name env of
       -- If it's in the env, we've already type checked it. Instantiate it now
       Just polytype -> only =<< instantiate polytype
@@ -98,7 +101,7 @@ infer env expr = do
                   `catchError` unificationError expr funcT argT
       return (unifyS • argS • funcS, applySub unifyS resultT)
     Let name expr' next -> do
-      -- create a new variable for the name (or use existing)
+      -- either create a new type variable for the name, or use existing
       newT <- newVarForLet name
       -- create a new environment with that mapping added
       let env1 = M.insert name (bare newT) env
@@ -123,7 +126,9 @@ infer env expr = do
       Nothing -> register name (Declared typ) >> handle next
       Just _ -> inferError $ "Redeclaration of variable `" ++ name ++ "`"
     TypeClass name types sigs next -> do
-      tclass <- makeTypeClass name types sigs `catchError` typeClassError name
+      tclass@(TC typ _ sigs) <- makeTypeClass name types sigs
+                      `catchError` typeClassError name
+      addSigs name typ sigs
       addTypeClass name tclass
       handle next
     Instance tclass typ exprs next -> do
@@ -131,45 +136,72 @@ infer env expr = do
       inst <- makeInstance tclass typ sigs `catchError` instanceError tclass typ
       addInstance tclass typ
       handle next
-    ADT typeName vars constructors next -> do
+    Datatype typeName vars constructors next -> do
       (kind, funcs) <- makeType typeName vars constructors
                           `catchError` adtError typeName
       forM_ funcs $ \(name, funcT) ->
         register name (Checked $ generalize mempty funcT)
       registerType typeName kind
       handle next
-
     otherwise -> error $ "FATAL: Unhandleable expression " ++ prettyExpr expr
-    where
-      only t = return (mempty, t)
-      newvar = newTypeVar []
-      handle next = case next of
-        Nothing -> only (tuple [])
-        Just expr -> infer env expr
-      addTypeClass name _class = modify $
-        \s -> s { typeClasses = M.insert name _class (typeClasses s) }
-      addInstance tclass typ = do
-        instanceSet <- gets instances <!> M.lookup tclass >>= \case
-          Nothing  -> return $ S.singleton typ
-          Just set -> return $ S.insert typ set
-        newInstances <- M.insert tclass instanceSet <$> gets instances
-        modify (\s -> s { instances = newInstances })
-      newVarForLet name = nsLookup name >>= \case
-        Nothing -> newvar
-        Just (Declared t) -> return t
-        Just (Checked t) ->
-          -- don't allow duplicate definitions
-          inferError $ "Redefinition of `" ++ name ++ "`, which had " ++
-          "previously been defined in this scope (with type `" ++
-          render 0 t ++ "`)"
-      getNameAndType expr = case expr of
-        Let name expr _ -> do
-          (subs, typ) <- infer mempty expr
-          return (name, applySub subs typ)
-        otherwise -> error "FATAL: Non-let expression in instance declaration"
-      registerType typeName kind = do
-        newKinds <- M.insert typeName kind <$> gets kinds
-        modify $ \s -> s {kinds = newKinds}
+  where handle next = case next of
+          Nothing -> only (tuple [])
+          Just expr -> infer env expr
+        only t = return (mempty, t)
+
+newvar = newTypeVar []
+
+addTypeClass name _class = modify $
+  \s -> s { typeClasses = M.insert name _class (typeClasses s) }
+
+addInstance tclass typ = do
+  instanceSet <- gets instances <!> M.lookup tclass >>= \case
+    Nothing  -> return $ S.singleton typ
+    Just set -> return $ S.insert typ set
+  newInstances <- M.insert tclass instanceSet <$> gets instances
+  modify (\s -> s { instances = newInstances })
+
+addSigs className (TVar _ tvarName) sigs = do
+  -- we need to stick a type class restriction on each occurrence of
+  -- the variable in question
+  types <- mapM (restrictTC tvarName className) (snd <$> sigs)
+  let tRecs = map (Checked . generalize mempty) types
+  let sigs' = M.fromList $ zip (fst <$> sigs) tRecs
+  newRecords <- M.union sigs' <$> gets records
+  modify $ (\s -> s { records = newRecords })
+
+newVarForLet name = nsLookup name >>= \case
+  Nothing -> newvar
+  Just (Declared t) -> return t
+  Just (Checked t) ->
+    -- don't allow duplicate definitions
+    inferError $ "Redefinition of `" ++ name ++ "`, which had " ++
+    "previously been defined in this scope (with type `" ++
+    render 0 t ++ "`)"
+
+getNameAndType expr = case expr of
+  Let name expr _ -> do
+    (subs, typ) <- infer mempty expr
+    return (name, applySub subs typ)
+  otherwise -> error "FATAL: Non-let expression in instance declaration"
+
+registerType typeName kind = do
+  newKinds <- M.insert typeName kind <$> gets kinds
+  modify $ \s -> s {kinds = newKinds}
+
+restrictTC tvarName className typ = case typ of
+  TVar _ name | name == tvarName -> return $ TVar [className] tvarName
+  type1 :=> type2 -> do
+    type1' <- rec type1
+    type2' <- rec type2
+    return $ type1' :=> type2'
+  TApply type1 type2 -> do
+    type1' <- rec type1
+    type2' <- rec type2
+    return $ TApply type1' type2'
+  TTuple types -> TTuple <$> mapM rec types
+  otherwise -> return typ
+  where rec = restrictTC tvarName className
 
 -- | Returns the type's kind and the names and types of its constructors
 makeType :: Name -> [Name] -> [Constructor] -> Inferrer (Kind, [(Name, Type)])
@@ -280,7 +312,7 @@ a `unify` b = do
       s1 <- t1 `unify` t3
       s2 <- applySub s1 t2 `unify` applySub s1 t4
       return (s1 • s2)
-    (l `TApply` r, l' `TApply` r') -> unify (l :=> r) (l' :=> r')
+    (TApply l r, TApply l' r') -> unify (l :=> r) (l' :=> r')
     (t1, t2) -> throwError $ "types do not unify: " ++ render 0 t1 ++ " !: " ++
                    render 0 t2
   where
@@ -293,8 +325,8 @@ a `unify` b = do
            else throwError $ concat [ "Type cycle detected when attempting "
                                      , "to unify `", render 0 a, "` with `"
                                      , render 0 b, "`: ", name, "` is a free "
-                                     , "variable with respect to type "
-                                     , render 0 typ]
+                                     , "variable with respect to type `"
+                                     , render 0 typ, "`"]
 
 getFull :: Name -> Inferrer Name
 getFull name = getNS <!> (++ "." ++ name)

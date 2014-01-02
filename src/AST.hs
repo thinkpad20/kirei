@@ -33,7 +33,7 @@ data Expr =
   | Tuple [Expr]
   | Lambda Expr Expr
   | List ListLiteral
-  | ADT Name [Name] [Constructor] (Maybe Expr)
+  | Datatype Name [Name] [Constructor] (Maybe Expr)
   | Sig Name Type (Maybe Expr)
   | TypeClass Name [Type] [Expr] (Maybe Expr)
   | Instance Name Type [Expr] (Maybe Expr)
@@ -76,7 +76,7 @@ prettyExpr e = case e of
   List (ListRange start stop) -> "[" ++ prettyExpr start ++ ".." ++
                                     prettyExpr stop ++ "]"
   Sig name typ e -> "sig " ++ name ++ " : " ++ render 0 typ ++ "; " ++ handle e
-  ADT name vars cs next -> "adt " ++ name ++ " " ++ int " " vars ++ " = " ++
+  Datatype name vars cs next -> "type " ++ name ++ " " ++ int " " vars ++ " = " ++
     int " | " (map (render 0) cs) ++ "; " ++ handle next
   TypeClass name types sigs next ->
     "typeclass " ++ name ++ " " ++ int " " (render 0 <$> types) ++
@@ -117,14 +117,18 @@ desugar expr = case expr of
   Case expr' matches -> caseToLambda (rec expr') matches
   Lambda pat e -> Lambda (rec pat) (rec e)
   Tuple es -> Tuple (map rec es)
-  Let name e Nothing -> Let name (rec e) Nothing
-  Let name e1 (Just e2) -> Let name (rec e1) (Just $ rec e2)
-  ADT n ns cs (Just e) -> ADT n ns cs (Just $ rec e)
-  Sig n t (Just e) -> Sig n t (Just $ rec e)
+  Let name e next -> Let name (rec e) (handle next)
+  Datatype n ns cs next -> Datatype n ns cs (handle next)
+  Sig n t next -> Sig n t (handle next)
+  Instance name typ es next -> Instance name typ (rec <$> es) (handle next)
+  TypeClass name types sigs next -> TypeClass name types sigs (handle next)
   otherwise -> expr
   where
     -- shorthand for recursing
     rec = desugar
+    -- dealing with (Maybe Expr)
+    handle Nothing = Nothing
+    handle (Just e) = Just $ rec e
     -- the goal here is to string together pattern lambdas with `(or)`, with
     -- the last function returned an `(error)` indicating the match failed.
     -- see SPJ's book for more info. `(or)` and `(error)` are both built-ins.

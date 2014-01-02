@@ -1,5 +1,12 @@
 {-# LANGUAGE LambdaCase #-}
-module KindChecker (infer, KindSubs, (•), unify, apply) where
+module KindChecker ( infer
+                   , infer'
+                   , KindSubs
+                   , (•)
+                   , unify
+                   , apply
+                   , lookupKindFromTypeClass
+                   , matchWithParent) where
 
 import Prelude hiding (foldr)
 import Common
@@ -37,10 +44,9 @@ infer env typ = case typ of
     Just kind -> only kind
   TVar classes name -> case M.lookup name env of
     Nothing -> throwError $ "Type variable `" ++ name ++ "` is out of scope"
-    Just kind ->
-      if length classes > 0
-      then throwError $ "No class restrictions allowed in constructors"
-      else only kind
+    Just kind -> do
+      forM_ classes (matchWithParent kind)
+      only kind
   TApply funcT argT -> do
     resultK        <- newvar
     (funcS, funcK) <- infer env funcT
@@ -78,12 +84,27 @@ unify kind1 kind2 = case (kind1, kind2) of
 
 subs1 • subs2 = (apply subs1 <$> subs2) `M.union` subs1
 
+infer' env typ = infer env typ >>= \(subs, kind) -> return $ apply subs kind
 apply subs kind = case kind of
   Type -> Type
   KVar name -> case M.lookup name subs of
     Nothing -> KVar name
     Just kind -> kind
   kind1 :-> kind2 -> apply subs kind1 :-> apply subs kind2
+
+lookupKindFromTypeClass :: Name -> Inferrer Kind
+lookupKindFromTypeClass name = gets typeClasses <!> M.lookup name >>= \case
+  Just (TC _ kind _) -> return kind
+  Nothing -> throwError $ "Parent class `" ++ name ++ "` does not exist"
+
+matchWithParent :: Kind -> Name -> Inferrer ()
+matchWithParent kind parent = do
+  kind' <- lookupKindFromTypeClass parent
+  unify kind kind'
+    `catchError` \msg -> throwError $ msg ++ ". When attempting to " ++
+                                      "unify with parent class `" ++
+                                      parent ++ "`"
+  return ()
 
 prnt :: String -> Inferrer ()
 prnt = lift . lift . putStrLn

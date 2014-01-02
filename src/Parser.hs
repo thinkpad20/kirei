@@ -202,10 +202,11 @@ pParens = do
     [e] -> return e
     es -> return $ Tuple es
 
-pADT :: Parser Expr
-pADT = ADT <$ keyword "type" <*> pTypeName <*> many pTypeVariable
-           <* keysym "=" <*> pConstructors
-           <* keysym ";" <*> optionMaybe pExprs where
+pDatatype :: Parser Expr
+pDatatype = Datatype <$
+              keyword "type" <*> pTypeName <*> many pTypeVariable
+              <* keysym "=" <*> pConstructors
+              <* keysym ";" <*> optionMaybe pExprs where
   pConstructor = try pSymConstructor <|> pVarConstructor
   pSymConstructor = do
     leftT <- pType
@@ -397,7 +398,7 @@ pExpr = choice [ try pFixity
                , pIf
                , pSig
                , pLet
-               , pADT
+               , pDatatype
                , pTypeClass
                , pInstance
                , pBinary]

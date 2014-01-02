@@ -27,7 +27,7 @@ module Types ( Type(..)
               , tuple
               , bare
               , newTypeVar
-              , isSingleKind
+              , getTypeClassVars
               , barev) where
 
 import Prelude hiding (foldr)
@@ -84,7 +84,7 @@ instance Render TypeRecord where
 data InferrerState =
   InferrerState { freshName   :: Name
                 , nameStack   :: [Name]
-                , records     :: Record
+                , records     :: M.Map Name TypeRecord
                 , kinds       :: M.Map Name Kind
                 , typeClasses :: M.Map Name TypeClass
                 , instances   :: M.Map Name (S.Set Type)
@@ -94,19 +94,33 @@ infixr 4 :=>
 infixr 4 :->
 
 instance Render Type where
-  render _ t = case t of
-    TVar [] name -> name
-    TVar cNames name -> "(" ++ name ++ " :~ " ++ int ", " cNames ++ ")"
-    TConst name -> name
-    TApply (TConst "[]") t -> "[" ++ r t ++ "]"
-    TApply (TConst c) t -> c ++ " " ++ r t
-    TApply (TVar [] v) t -> v ++ " " ++ r t
-    TApply t1 t2 -> "(" ++ r t1 ++ " " ++ r t2 ++ ")"
-    TTuple ts -> "(" ++ intercalate ", " (map r ts) ++ ")"
-    t1@(a :=> b) :=> t2 -> "(" ++ r t1 ++ ")" ++ " -> " ++ r t2
-    t1 :=> t2 -> r t1 ++ " -> " ++ r t2
-    where r = render 0
-          int = intercalate
+  render _ t = case getTypeClassVars t of
+    Left err -> error $ err ++ " when attempting to print type " ++ show t
+    Right tcmap -> shw tcmap ++ r t
+    where
+      r t = case t of
+        TVar _ name -> name
+        TConst name -> name
+        TApply (TConst "[]") t -> "[" ++ r t ++ "]"
+        TApply (TConst c) t -> c ++ " " ++ r' t
+        TApply (TVar [] v) t -> v ++ " " ++ r' t
+        TApply t1 t2 -> "(" ++ r t1 ++ " " ++ r t2 ++ ")"
+        TTuple ts -> "(" ++ intercalate ", " (map r ts) ++ ")"
+        t1 :=> t2 -> r' t1 ++ " -> " ++ r t2
+      r' t = case t of
+        _ :=> _ -> "(" ++ r t ++ ")"
+        TApply _ _ -> "(" ++ r t ++ ")"
+        otherwise -> r t
+      int = intercalate
+      shw tcmap =
+        let pairs = M.toList tcmap
+            shwPair (_, []) = ""
+            shwPair (name, classes) =
+              "" ++ name ++ " :~ " ++ int ", " classes ++ ""
+            pairs' = filter (\p -> length (shwPair p) > 0) pairs
+        in case pairs' of
+          [] -> ""
+          pairs -> intercalate "; " (map shwPair pairs) ++ " => "
 
 instance Render Kind where
   render _ t = case t of
@@ -140,6 +154,40 @@ instance Types Type where
   applySub s (t1 :=> t2) = applySub s t1 :=> applySub s t2
   applySub s (TTuple ts) = TTuple $ applySub s <$> ts
   applySub _ t = t
+
+-- | Searches through a type and pulls out any variables which
+-- have type class restrictions. Returns an error if the same variable
+-- is ever declared with different type classes.
+getTypeClassVars :: Type -> Either String (M.Map Name [Name])
+getTypeClassVars typ = case typ of
+  TConst _ -> return mempty
+  TVar classes name -> return $ M.singleton name classes
+  type1 :=> type2 -> do
+    res1 <- getTypeClassVars type1
+    res2 <- getTypeClassVars type2
+    forM_ (M.toList res1) $ \(name, classes) ->
+      case M.lookup name res2 of
+        Nothing -> return ()
+        Just classes2 ->
+          if classes /= classes2
+          then Left $ "Type variable `" ++ name ++ "` declared with " ++
+                      "different type classes"
+          else return ()
+    return (res1 <> res2)
+  TApply type1 type2 -> getTypeClassVars (type1 :=> type2)
+  TTuple types -> do
+    results <- mapM getTypeClassVars types
+    combine mempty results
+    where
+      combine result [] = return result
+      combine result (tmap:tmaps) = do
+        forM_ (M.toList tmap) $ \(name, classes) -> do
+          case M.lookup name result of
+            Just classes' | classes /= classes' ->
+              Left $ "Type variable `" ++ name ++ "` declared with " ++
+                      "different type classes"
+            otherwise -> return ()
+        combine (result <> tmap) tmaps
 
 -- | @getClasses@ will search through a type for a type variable
 -- and return whatever type classes are associated with that variable
@@ -232,10 +280,6 @@ s1 • s2 = (applySub s1 <$> s2) `M.union` s1
 inherits :: TypeClass -> [Name]
 inherits (TC (TVar inherits' _) _ _) = inherits'
 inherits tc = error $ "FATAL: malformed type class `" ++ show tc ++ "`"
-
-isSingleKind :: Kind -> Bool
-isSingleKind Type = True
-isSingleKind _    = False
 
 -- Default/initial versions of type checking data
 builtinFuncs = S.fromList [  "+", "-", "*", "/", ">"
