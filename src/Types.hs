@@ -65,30 +65,27 @@ type Instance = Type
 
 -- Type checker machinery, shared by TypeChecker and TypeClass
 
-type Inferrer = ErrorT String (StateT InferrerState IO)
+type Inferrer = ErrorT TypeCheckError (StateT InferrerState IO)
 type TypeCheckError = String
 
 data TypeRecord = Checked Polytype
                 | Declared Type
                 deriving (Show)
 
-type Record = M.Map Name TypeRecord
-
-instance Render Record where
+instance Render (M.Map Name TypeRecord) where
   render _ rec = renderMap rec
 
 instance Render TypeRecord where
   render _ (Checked ptype) = render 0 ptype
   render _ (Declared typ)  = render 0 typ ++ " (declared)"
 
-data InferrerState =
-  InferrerState { freshName   :: Name
-                , nameStack   :: [Name]
-                , records     :: M.Map Name TypeRecord
-                , kinds       :: M.Map Name Kind
-                , typeClasses :: M.Map Name TypeClass
-                , instances   :: M.Map Name (S.Set Type)
-                } deriving (Show)
+data InferrerState = InferrerState { freshName   :: Name
+                                   , nameStack   :: [Name]
+                                   , records     :: M.Map Name TypeRecord
+                                   , kinds       :: M.Map Name Kind
+                                   , typeClasses :: M.Map Name TypeClass
+                                   , instances   :: M.Map Name (S.Set Type)
+                                   } deriving (Show)
 
 infixr 4 :=>
 infixr 4 :->

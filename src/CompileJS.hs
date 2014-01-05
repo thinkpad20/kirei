@@ -4,7 +4,6 @@ import qualified JavaScript.AST as J
 import Parser
 import Control.Monad
 import Control.Monad.State
-import Control.Monad.Identity
 import Data.Monoid
 import Control.Applicative
 import Debug.Trace
@@ -12,11 +11,36 @@ import Data.Char (toLower)
 import Prelude hiding (foldr)
 import Common
 import AST
-import Types
+import Types hiding (nameStack, records)
+import qualified Data.Map as M
+import qualified Data.Set as S
+
+type Compiler      = ErrorT CompilerError (StateT CompilerState IO)
+type CompilerError = String
+
+data CompilerState =
+  CompilerState { nameStack   :: [Name]
+                , records     :: M.Map Name Type
+                , overloadeds :: S.Set Name
+                } deriving Show
+
+runCompiler :: Compiler a
+            -> M.Map Name Type
+            -> IO (Either CompilerError a, CompilerState)
+runCompiler compiler records = flip runStateT initialState $ runErrorT compiler
+  where initialState = CompilerState { nameStack   = ["(root)"]
+                                     , records     = records
+                                     , overloadeds = mempty
+                                     }
 
 -- Exporting functions
 toJs :: String -> IO J.Block
-toJs src = grab src >>= return . compile
+toJs src = do
+  expr     <- grab src
+  (compiled, _) <- runCompiler (compile expr) mempty
+  case compiled of
+    Left err    -> error err
+    Right block -> return block
 
 renderJS :: String -> IO String
 renderJS src = toJs src >>= return . (render 0)
@@ -31,9 +55,10 @@ boolAndAssigns argName expr = (bools, assignments) where
   (bools, assignments, _) = ba 0 argName expr
   ba :: Int -> J.Expr -> Expr -> (Maybe J.Expr, J.Block, Int)
   ba k argName expr = case expr of
-    Bool b -> (eq' J.Bool b, mempty, k)
     Number n ->(eq' J.Number n, mempty, k)
     String s -> (eq' J.String s, mempty, k)
+    TypeName "True" -> (eq' J.Bool True, mempty, k)
+    TypeName "False" -> (eq' J.Bool False, mempty, k)
     TypeName n -> (eq (aRef 0) (J.String n), mempty, 1)
     Var v -> case argName of
         J.Var v' | v' == v -> (Nothing, mempty, k)
@@ -63,26 +88,32 @@ boolAndAssigns argName expr = (bools, assignments) where
           -- concatenate all of the assignments from the subcompilations
           mkAssigns list = mconcat (snd <$> list)
 
-compileCase :: Int -> Expr -> Matches -> J.Block
+compileCase :: Int -> Expr -> Matches -> Compiler J.Block
 compileCase tempNum expr matches = case expr of
   (Var name) -> matchesToBlock (J.Var name) matches
-  _ -> single (J.Assign mkVName (eToE expr)) <> matchesToBlock mkVName matches
+  otherwise  -> do
+    assign <- J.Assign mkVName <$> eToE expr
+    mappend (single assign) <$> matchesToBlock mkVName matches
   where mkVName = J.Var $ "__temp" ++ show tempNum
 
-compileCaseToExpr :: Expr -> Matches -> J.Expr
-compileCaseToExpr expr matches =
-  J.Call (J.Function ["_a"] $ matchesToBlock (J.Var "_a") matches) [eToE expr]
+compileCaseToExpr :: Expr -> Matches -> Compiler J.Expr
+compileCaseToExpr expr matches = do
+  blocks <- matchesToBlock (J.Var "_a") matches
+  let call = J.Call (J.Function ["_a"] blocks)
+  call <$> (pure <$> eToE expr)
 
-matchesToBlock :: J.Expr -> Matches -> J.Block
+matchesToBlock :: J.Expr -> Matches -> Compiler J.Block
 matchesToBlock v matches = case matches of
   [] -> error "Empty case statement with no matches"
   (pat, res):ms -> case boolAndAssigns v pat of
     (Nothing, J.Block []) -> eToBlk res
-    (Nothing, assignments) -> assignments <> eToBlk res
-    (Just cond, assignments) -> single $
-      J.If cond (assignments <> eToBlk res) $ case ms of
-        [] -> single $ J.throwNewError "Pattern match failed"
-        _ -> matchesToBlock v ms
+    (Nothing, assignments) -> mappend assignments <$> eToBlk res
+    (Just cond, assignments) -> do
+      resBlock <- eToBlk res
+      nextBlock <- case ms of
+        [] -> return $ single $ J.throwNewError "Pattern match failed"
+        _  -> matchesToBlock v ms
+      return $ single (J.If cond (assignments <> resBlock) nextBlock)
 
 
 makeConstructors :: Name -> [Constructor] -> J.Block
@@ -108,22 +139,22 @@ makeConstructors name cs = mconcat (construct ~> single <$> cs) where
 -- Compilation
 -- eToBlk compiles an expression to a block; this means that it will always
 -- end with a return statement.
-eToBlk :: Expr -> J.Block
+eToBlk :: Expr -> Compiler J.Block
 eToBlk expr = case expr of
-  If c t f -> single $ J.If (eToE c) (eToBlk t) (eToBlk f)
+  If c t f -> single <$> (J.If <$> eToE c <*> eToBlk t <*> eToBlk f)
   Let name e e' -> case e' of
     -- if there's no next expression, make a singleton block
-    Nothing -> single $ J.Assign (J.Var $ makeName name) $ eToE e
+    Nothing -> single <$> J.Assign (J.Var $ makeName name) <$> eToE e
     -- otherwise, do the same but then append on the next guy
-    Just e' -> eToBlk (Let name e Nothing) <> eToBlk e'
-  Apply a (Tuple es) -> call (eToE a) (eToE <$> es)
-  Apply a b -> call (eToE a) [eToE b]
-  Comma e1 e2 -> compile e1 <> eToBlk e2
+    Just e' -> mappend <$> eToBlk (Let name e Nothing) <*> eToBlk e'
+  Apply a (Tuple es) -> call <$> eToE a <*> mapM eToE es
+  Apply a b -> call <$> eToE a <*> (pure <$> eToE b)
+  Comma e1 e2 -> mappend <$> compile e1 <*> eToBlk e2
   Case expr matches -> compileCase 0 expr matches
-  ADT name tnames cs e' -> case e' of
-    Nothing -> makeConstructors name cs
-    Just e' -> makeConstructors name cs <> eToBlk e'
-  e -> single $ J.Return $ eToE e
+  Datatype name tnames cs e' -> case e' of
+    Nothing -> return $ makeConstructors name cs
+    Just e' -> mappend (makeConstructors name cs) <$> eToBlk e'
+  e -> single <$> J.Return <$> eToE e
   where call e es = single $ J.Return $ J.Call e es
         makeName name | isSymbol name = toString name
                       | otherwise = name
@@ -133,51 +164,57 @@ eToBlk expr = case expr of
 -- need to be producing a full block. As such, encountering a let statement
 -- or a comma here is either syntactically invalid, or should never occur
 -- due to the algorithm.
-eToE :: Expr -> J.Expr
+eToE :: Expr -> Compiler J.Expr
 eToE expr = case expr of
-  Bool b -> J.Bool b
-  Number n -> J.Number n
-  String s -> J.String s
-  Tuple es -> J.Array (eToE <$> es)
-  TypeName "[]" -> J.Var "Empty"
-  TypeName n -> J.Var $ if isSymbol n then toString n else n
-  Var v -> J.Var v
-  Symbol s -> J.Var $ toString s
-  If c t f -> J.Ternary (eToE c) (eToE t) (eToE f)
-  Lambda (Var x) e -> J.Function [x] $ eToBlk e
-  Lambda (Tuple exprs) e -> J.Function (map toArg exprs) $ eToBlk e
+  Number n -> return $ J.Number n
+  String s -> return $ J.String s
+  Tuple es -> J.Array <$> mapM eToE es
+  TypeName "[]" -> return $ J.Var "Empty"
+  TypeName "True" -> return $ J.Bool True
+  TypeName "False" -> return $ J.Bool False
+  TypeName n -> return $ J.Var $ if isSymbol n then toString n else n
+  Var v -> return $ J.Var v
+  Symbol s -> return $ J.Var $ toString s
+  If c t f -> J.Ternary <$> eToE c <*> eToE t <*> eToE f
+  Lambda (Var x) e -> J.Function [x] <$> eToBlk e
+  Lambda (Tuple exprs) e -> J.Function (map toArg exprs) <$> eToBlk e
     where toArg (Var x) = x
           toArg _ = error $ "Can't handle arbitrary exprs in args yet"
-  Apply a (Tuple es) -> J.Call (eToE a) (eToE <$> es)
-  Apply a b -> J.Call (eToE a) [eToE b]
-  Dotted e1 e2 -> J.Dot (eToE e1) (eToE e2)
+  Apply a (Tuple es) -> J.Call <$> eToE a <*> (mapM eToE es)
+  Apply a b -> J.Call <$> eToE a <*> (pure <$> eToE b)
+  Dotted e1 e2 -> J.Dot <$> eToE e1 <*> eToE e2
   Case expr matches -> compileCaseToExpr expr matches
-  List (ListLiteral list) -> J.Call (J.Var "mkList") (eToE <$> list)
+  List (ListLiteral list) -> J.Call (J.Var "mkList") <$> mapM eToE list
   List (ListRange start stop) ->
-    J.Call (J.Var "mkListRange") $ eToE <$> [start, stop]
+    J.Call (J.Var "__mkListRange__") <$> mapM eToE [start, stop]
   l@(Let name expr next) -> case next of
-    Nothing -> error $ "Unfinished let statement in an expression: " ++ show l
-    Just next -> J.Call (J.Function [name] (eToBlk next)) [eToE expr]
-  e@(Comma _ _) -> error $ "Comma in an expression: " ++ show e
-  otherwise -> error $ "Unhandlable expression: " ++ show expr
+    Nothing ->
+      throwError $ "Unfinished let statement in an expression: " ++ show l
+    Just next ->
+      J.Call <$> (J.Function [name] <$> eToBlk next) <*> (pure <$> eToE expr)
+  e@(Comma _ _) ->
+    throwError $ "Comma in an expression: " ++ show e
+  otherwise ->
+    error $ "FATAL: Unhandlable expression: " ++ show expr
 
 -- compile is the top-level compilation function. It's almost identical to
 -- eToBlk except that it does not produce a return on bare expressions or
 -- if statements.
-compile :: Expr -> J.Block
+compile :: Expr -> Compiler J.Block
 compile expr = case expr of
-  If c t f -> single $ J.If (eToE c) (compile t) (compile f)
+  If c t f -> single <$> (J.If <$> eToE c <*> compile t <*> compile f)
   Let v e e' -> case e' of
-    Nothing -> single $ J.Assign (J.Var v) $ eToE e
-    Just e' -> eToBlk (Let v e Nothing) <> compile e'
-  Apply a (Tuple es) -> call (eToE a) (eToE <$> es)
-  Apply a b -> call (eToE a) [eToE b]
-  Comma l@(Let v e e') e2 -> compile l <> compile e2
-  Comma e1 e2 -> compile e1 <> compile e2
-  ADT name tnames cs e' -> case e' of
-    Nothing -> makeConstructors name cs
-    Just e' -> makeConstructors name cs <> compile e'
-  e -> single $ J.Expr $ eToE e
+    Nothing -> single <$> J.Assign (J.Var v) <$> eToE e
+    Just e' -> mappend <$> eToBlk (Let v e Nothing) <*> compile e'
+  Apply a (Tuple exprs) -> call <$> eToE a <*> mapM eToE exprs
+  Apply a b -> call <$> eToE a <*> (pure <$> eToE b)
+  Comma l@(Let v e e') e2 -> mappend <$> compile l <*> compile e2
+  Comma e1 e2 -> mappend <$> compile e1 <*> compile e2
+  Datatype name tnames cs e' -> case e' of
+    Nothing -> return $ makeConstructors name cs
+    Just e' -> mappend (makeConstructors name cs) <$> compile e'
+  -- any other expression types will be treated as single expressions
+  e -> single <$> J.Expr <$> eToE e
   where call e es = single $ J.Expr $ J.Call e es
 
 runTest :: IO ()
